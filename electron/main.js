@@ -15,28 +15,41 @@ function getResourcePath(relativePath) {
     return path.join(__dirname, '..', relativePath);
 }
 
-// 获取 vendor 路径
+// 获取 vendor 路径 - 根据平台
 function getVendorPath() {
-    return path.join(getResourcePath('vendor'), 'windows');
+    if (process.platform === 'win32') {
+        return path.join(getResourcePath('vendor'), 'windows');
+    }
+    return getResourcePath('vendor');
 }
 
 // 获取打包的 Python 路径
 function getPythonPath() {
-    if (process.platform === 'win32' && app.isPackaged) {
+    if (process.platform === 'win32') {
+        // Windows: 优先使用打包的 Python
         const vendorPython = path.join(getVendorPath(), 'python', 'python.exe');
         console.log('Checking vendor Python at:', vendorPython);
+        console.log('Vendor Python exists:', fs.existsSync(vendorPython));
+
         if (fs.existsSync(vendorPython)) {
             return vendorPython;
         }
+
+        // 如果打包的 Python 不存在，尝试系统 Python
+        console.log('Vendor Python not found, trying system python...');
+        return 'python';
     }
-    // 开发模式或 Mac
-    return process.platform === 'win32' ? 'python' : 'python3';
+
+    // macOS / Linux: 使用系统 Python
+    return 'python3';
 }
 
 // 获取 FFmpeg bin 路径
 function getFfmpegBinPath() {
     if (process.platform === 'win32') {
         const vendorFfmpeg = path.join(getVendorPath(), 'ffmpeg', 'bin');
+        console.log('Checking FFmpeg at:', vendorFfmpeg);
+        console.log('FFmpeg exists:', fs.existsSync(vendorFfmpeg));
         if (fs.existsSync(vendorFfmpeg)) {
             return vendorFfmpeg;
         }
@@ -55,6 +68,14 @@ function getEnv() {
         env.FFPROBE_PATH = path.join(ffmpegPath, 'ffprobe.exe');
     }
 
+    // 确保 Python 能找到正确的模块
+    if (process.platform === 'win32') {
+        const pythonDir = path.join(getVendorPath(), 'python');
+        const sitePackages = path.join(pythonDir, 'Lib', 'site-packages');
+        env.PYTHONPATH = sitePackages;
+        console.log('Setting PYTHONPATH:', sitePackages);
+    }
+
     return env;
 }
 
@@ -65,12 +86,21 @@ function startPythonBackend() {
     const env = getEnv();
 
     console.log('=== Starting Python Backend ===');
+    console.log('Platform:', process.platform);
     console.log('app.isPackaged:', app.isPackaged);
     console.log('process.resourcesPath:', process.resourcesPath);
     console.log('Python path:', pythonPath);
     console.log('Script path:', scriptPath);
-    console.log('Python exists:', fs.existsSync(pythonPath));
     console.log('Script exists:', fs.existsSync(scriptPath));
+
+    // 列出 vendor 目录内容（调试用）
+    const vendorPath = getVendorPath();
+    console.log('Vendor path:', vendorPath);
+    if (fs.existsSync(vendorPath)) {
+        console.log('Vendor directory contents:', fs.readdirSync(vendorPath));
+    } else {
+        console.log('Vendor directory does not exist!');
+    }
 
     if (!fs.existsSync(scriptPath)) {
         console.error('Server script not found at:', scriptPath);
@@ -98,6 +128,9 @@ function startPythonBackend() {
 
         pythonProcess.on('close', (code) => {
             console.log(`Python exited with code ${code}`);
+            if (code !== 0) {
+                console.error('Python backend failed to start. Check logs above for details.');
+            }
         });
 
     } catch (err) {

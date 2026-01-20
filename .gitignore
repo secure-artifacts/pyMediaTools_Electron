@@ -64,3 +64,8 @@ builder-effective-config.yaml
 # vendor/windows/ffmpeg/
 # vendor/linux/
 # vendor/darwin/
+# 排除大型 vendor 目录
+vendor/windows/python/
+vendor/windows/ffmpeg/
+vendor/linux/
+vendor/darwin/

@@ -4,12 +4,10 @@
 name: 🚀 Build All Platforms
 
 on:
-  # 推送版本标签时自动触发
   push:
     tags:
       - 'v*'
   
-  # 手动触发（在 GitHub 页面点击 Run workflow）
   workflow_dispatch:
     inputs:
       version:
@@ -17,10 +15,13 @@ on:
         required: false
         default: 'dev'
 
-# 并发控制：同一分支只运行一个工作流
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  PYTHON_EMBED_VERSION: "3.11.9"
+  FFMPEG_VERSION: "7.1"
 
 jobs:
   # ==================== macOS 打包 ====================
@@ -38,7 +39,27 @@ jobs:
           node-version: '20'
           cache: 'npm'
       
-      - name: 🔧 安装依赖
+      - name: 🐍 设置 Python (用于后端依赖验证)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: 🔧 安装 Python 依赖
+        run: |
+          pip install flask pydub requests
+      
+      - name: 📥 下载 FFmpeg (macOS)
+        run: |
+          mkdir -p vendor/darwin/ffmpeg/bin
+          # 使用 Homebrew 安装的 ffmpeg 路径
+          brew install ffmpeg
+          cp $(which ffmpeg) vendor/darwin/ffmpeg/bin/
+          cp $(which ffprobe) vendor/darwin/ffmpeg/bin/
+          chmod +x vendor/darwin/ffmpeg/bin/*
+          echo "✅ FFmpeg 已安装到 vendor/darwin/ffmpeg/bin/"
+          ls -la vendor/darwin/ffmpeg/bin/
+      
+      - name: 🔧 安装 Node 依赖
         run: npm ci
       
       - name: 🏗️ 构建前端
@@ -73,7 +94,72 @@ jobs:
           node-version: '20'
           cache: 'npm'
       
-      - name: 🔧 安装依赖
+      - name: 🐍 下载 Python Embedded
+        shell: pwsh
+        run: |
+          $pythonUrl = "https://www.python.org/ftp/python/${{ env.PYTHON_EMBED_VERSION }}/python-${{ env.PYTHON_EMBED_VERSION }}-embed-amd64.zip"
+          $pythonZip = "python-embed.zip"
+          
+          Write-Host "📥 下载 Python Embedded from $pythonUrl"
+          Invoke-WebRequest -Uri $pythonUrl -OutFile $pythonZip
+          
+          # 创建目录并解压
+          New-Item -ItemType Directory -Force -Path "vendor/windows/python"
+          Expand-Archive -Path $pythonZip -DestinationPath "vendor/windows/python" -Force
+          Remove-Item $pythonZip
+          
+          # 启用 pip（修改 python311._pth）
+          $pthFile = "vendor/windows/python/python311._pth"
+          $content = Get-Content $pthFile
+          $content = $content -replace '#import site', 'import site'
+          Set-Content $pthFile $content
+          
+          # 下载 get-pip.py
+          Write-Host "📥 下载 get-pip.py"
+          Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile "vendor/windows/python/get-pip.py"
+          
+          # 安装 pip
+          Write-Host "🔧 安装 pip"
+          & "vendor/windows/python/python.exe" "vendor/windows/python/get-pip.py" --no-warn-script-location
+          
+          # 创建 site-packages 目录
+          New-Item -ItemType Directory -Force -Path "vendor/windows/python/Lib/site-packages"
+          
+          # 安装依赖
+          Write-Host "🔧 安装 Python 依赖"
+          & "vendor/windows/python/python.exe" -m pip install flask pydub requests --target "vendor/windows/python/Lib/site-packages" --no-warn-script-location
+          
+          Write-Host "✅ Python Embedded 安装完成"
+          dir "vendor/windows/python"
+      
+      - name: 📥 下载 FFmpeg (Windows)
+        shell: pwsh
+        run: |
+          $ffmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+          $ffmpegZip = "ffmpeg.zip"
+          
+          Write-Host "📥 下载 FFmpeg from $ffmpegUrl"
+          Invoke-WebRequest -Uri $ffmpegUrl -OutFile $ffmpegZip
+          
+          # 解压到临时目录
+          Expand-Archive -Path $ffmpegZip -DestinationPath "ffmpeg-temp" -Force
+          
+          # 创建目标目录并移动文件
+          New-Item -ItemType Directory -Force -Path "vendor/windows/ffmpeg/bin"
+          
+          # 找到解压后的目录（名称可能包含版本号）
+          $extractedDir = Get-ChildItem -Path "ffmpeg-temp" -Directory | Select-Object -First 1
+          Copy-Item "$($extractedDir.FullName)/bin/ffmpeg.exe" "vendor/windows/ffmpeg/bin/"
+          Copy-Item "$($extractedDir.FullName)/bin/ffprobe.exe" "vendor/windows/ffmpeg/bin/"
+          
+          # 清理
+          Remove-Item $ffmpegZip
+          Remove-Item -Recurse -Force "ffmpeg-temp"
+          
+          Write-Host "✅ FFmpeg 安装完成"
+          dir "vendor/windows/ffmpeg/bin"
+      
+      - name: 🔧 安装 Node 依赖
         run: npm ci
       
       - name: 🏗️ 构建前端
@@ -108,7 +194,36 @@ jobs:
           node-version: '20'
           cache: 'npm'
       
-      - name: 🔧 安装依赖
+      - name: 🐍 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: 🔧 安装 Python 依赖
+        run: |
+          pip install flask pydub requests
+      
+      - name: 📥 下载 FFmpeg (Linux)
+        run: |
+          mkdir -p vendor/linux/ffmpeg/bin
+          
+          # 下载静态编译的 FFmpeg
+          wget -q https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+          tar -xf ffmpeg-release-amd64-static.tar.xz
+          
+          # 找到解压目录并复制
+          FFMPEG_DIR=$(ls -d ffmpeg-*-amd64-static)
+          cp "$FFMPEG_DIR/ffmpeg" vendor/linux/ffmpeg/bin/
+          cp "$FFMPEG_DIR/ffprobe" vendor/linux/ffmpeg/bin/
+          chmod +x vendor/linux/ffmpeg/bin/*
+          
+          # 清理
+          rm -rf ffmpeg-release-amd64-static.tar.xz "$FFMPEG_DIR"
+          
+          echo "✅ FFmpeg 安装完成"
+          ls -la vendor/linux/ffmpeg/bin/
+      
+      - name: 🔧 安装 Node 依赖
         run: npm ci
       
       - name: 🏗️ 构建前端

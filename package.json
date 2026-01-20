@@ -81,6 +81,13 @@
           ]
         },
         {
+          "from": "assets",
+          "to": "assets",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
           "from": "vendor/windows",
           "to": "vendor/windows",
           "filter": [

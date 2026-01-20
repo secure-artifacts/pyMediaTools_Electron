@@ -516,6 +516,15 @@ function renderAudioSplitFileList() {
     }
 }
 
+// 检测是否为视频文件（通过文件扩展名或 MIME 类型）
+function isVideoFile(file) {
+    const videoExtensions = ['.mp4', '.mov', '.mkv', '.avi', '.wmv', '.flv', '.webm', '.m4v'];
+    const fileName = file.name?.toLowerCase() || '';
+    const mimeType = file.type?.toLowerCase() || '';
+
+    return videoExtensions.some(ext => fileName.endsWith(ext)) || mimeType.startsWith('video/');
+}
+
 // 为单个卡片生成波形
 async function generateWaveformForCard(idx, fileObj) {
     const canvas = document.getElementById(`audio-waveform-${idx}`);
@@ -524,9 +533,26 @@ async function generateWaveformForCard(idx, fileObj) {
     if (!canvas) return;
 
     try {
+        // 检测是否为视频文件 - 视频文件无法使用 Web Audio API 解码
+        if (isVideoFile(fileObj)) {
+            // 对于视频文件，使用 video 元素获取时长
+            await generateWaveformForVideo(idx, fileObj, canvas, loading, durationEl);
+            return;
+        }
+
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const arrayBuffer = await fileObj.arrayBuffer();
-        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+        let audioBuffer;
+        try {
+            audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+        } catch (decodeError) {
+            console.warn('音频解码失败，尝试使用媒体元素:', decodeError.message);
+            audioContext.close();
+            // 解码失败时，回退到视频处理方式
+            await generateWaveformForVideo(idx, fileObj, canvas, loading, durationEl);
+            return;
+        }
 
         // 更新时长显示
         if (durationEl) {
@@ -564,8 +590,87 @@ async function generateWaveformForCard(idx, fileObj) {
         audioContext.close();
     } catch (error) {
         console.error('波形生成失败:', error);
-        if (loading) loading.textContent = '加载失败';
+        if (loading) {
+            loading.textContent = '无法加载波形';
+            loading.style.color = 'var(--text-muted)';
+        }
+        // 尝试使用备用方法获取时长
+        try {
+            await generateWaveformForVideo(idx, fileObj, canvas, loading, durationEl);
+        } catch (fallbackError) {
+            console.error('备用方法也失败:', fallbackError);
+        }
     }
+}
+
+// 为视频文件生成简单的占位波形并获取时长
+async function generateWaveformForVideo(idx, fileObj, canvas, loading, durationEl) {
+    return new Promise((resolve, reject) => {
+        const mediaElement = document.createElement('video');
+        const blobUrl = URL.createObjectURL(fileObj);
+
+        mediaElement.preload = 'metadata';
+        mediaElement.muted = true;
+
+        const timeout = setTimeout(() => {
+            URL.revokeObjectURL(blobUrl);
+            if (loading) {
+                loading.textContent = '视频文件 (无波形)';
+                loading.style.fontSize = '10px';
+            }
+            resolve();
+        }, 10000); // 10秒超时
+
+        mediaElement.onloadedmetadata = () => {
+            clearTimeout(timeout);
+            const duration = mediaElement.duration;
+
+            // 更新时长显示
+            if (durationEl && isFinite(duration)) {
+                durationEl.textContent = formatTimeAudio(duration);
+            }
+
+            // 保存数据（生成简单的占位波形）
+            if (!window.audioCardData) window.audioCardData = {};
+            const fakePeaks = Array(150).fill(0).map(() => 0.3 + Math.random() * 0.4);
+            window.audioCardData[idx] = {
+                peaks: fakePeaks,
+                duration: duration
+            };
+
+            // 绘制简单的占位波形
+            drawWaveform(canvas, fakePeaks);
+
+            if (loading) {
+                loading.textContent = '🎬 视频';
+                loading.style.fontSize = '10px';
+                loading.style.background = 'rgba(102, 126, 234, 0.2)';
+                loading.style.padding = '2px 6px';
+                loading.style.borderRadius = '3px';
+                loading.style.position = 'absolute';
+                loading.style.top = '4px';
+                loading.style.right = '4px';
+                loading.style.left = 'auto';
+                loading.style.bottom = 'auto';
+                loading.style.display = 'block';
+            }
+
+            URL.revokeObjectURL(blobUrl);
+            resolve();
+        };
+
+        mediaElement.onerror = (e) => {
+            clearTimeout(timeout);
+            console.error('视频元数据加载失败:', e);
+            if (loading) {
+                loading.textContent = '无法加载';
+            }
+            URL.revokeObjectURL(blobUrl);
+            reject(new Error('视频加载失败'));
+        };
+
+        mediaElement.src = blobUrl;
+    });
 }
 
 // 播放卡片中的音频
@@ -2982,10 +3087,15 @@ async function downloadAllFiles(files) {
     }
 }
 
-function selectMediaOutputDir() {
-    const dir = prompt('请输入输出目录路径:');
-    if (dir) {
-        document.getElementById('media-output-path').value = dir;
+async function selectMediaOutputDir() {
+    try {
+        const dir = await window.electronAPI.selectDirectory();
+        if (dir) {
+            document.getElementById('media-output-path').value = dir;
+        }
+    } catch (error) {
+        console.error('选择目录失败:', error);
+        showToast('选择目录失败', 'error');
     }
 }
 

@@ -40,26 +40,6 @@
       "dist/**/*",
       "electron/**/*"
     ],
-    "extraResources": [
-      {
-        "from": "backend",
-        "to": "backend",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "vendor/windows",
-        "to": "vendor/windows",
-        "filter": [
-          "**/*"
-        ]
-      },
-      {
-        "from": "安装依赖.bat",
-        "to": "../安装依赖.bat"
-      }
-    ],
     "mac": {
       "target": [
         "dmg",
@@ -71,6 +51,15 @@
           "from": "backend",
           "to": "backend",
           "filter": [
+            "**/*",
+            "!uploads/**",
+            "!**/__pycache__/**"
+          ]
+        },
+        {
+          "from": "vendor/darwin",
+          "to": "vendor",
+          "filter": [
             "**/*"
           ]
         }
@@ -80,7 +69,29 @@
       "target": [
         "zip"
       ],
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.ico",
+      "extraResources": [
+        {
+          "from": "backend",
+          "to": "backend",
+          "filter": [
+            "**/*",
+            "!uploads/**",
+            "!**/__pycache__/**"
+          ]
+        },
+        {
+          "from": "vendor/windows",
+          "to": "vendor/windows",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "安装依赖.bat",
+          "to": "../安装依赖.bat"
+        }
+      ]
     },
     "linux": {
       "target": [
@@ -93,6 +104,15 @@
         {
           "from": "backend",
           "to": "backend",
+          "filter": [
+            "**/*",
+            "!uploads/**",
+            "!**/__pycache__/**"
+          ]
+        },
+        {
+          "from": "vendor/linux",
+          "to": "vendor",
           "filter": [
             "**/*"
           ]

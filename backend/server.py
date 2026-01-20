@@ -14,8 +14,12 @@ import subprocess
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 
-# 添加核心模块路径
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# 添加核心模块路径（Windows embedded Python 可能不会自动加入脚本目录）
+BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(BACKEND_DIR)
+for path in (BACKEND_DIR, PROJECT_ROOT):
+    if path not in sys.path:
+        sys.path.insert(0, path)
 
 # 导入核心模块
 try:

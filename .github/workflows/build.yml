@@ -46,7 +46,7 @@ jobs:
       
       - name: 🔧 安装 Python 依赖
         run: |
-          pip install flask pydub requests
+          pip install flask flask-cors pydub requests pysrt diff-match-patch
       
       - name: 📥 下载 FFmpeg (macOS)
         run: |
@@ -133,11 +133,11 @@ jobs:
           
           # 安装依赖到 site-packages
           Write-Host "🔧 安装 Python 依赖"
-          & "vendor/windows/python/python.exe" -m pip install flask pydub requests --target "vendor/windows/python/Lib/site-packages" --no-warn-script-location
+          & "vendor/windows/python/python.exe" -m pip install flask flask-cors pydub requests pysrt diff-match-patch --target "vendor/windows/python/Lib/site-packages" --no-warn-script-location
           
           # 验证依赖安装
-          Write-Host "🔍 验证 Flask 安装:"
-          & "vendor/windows/python/python.exe" -c "import flask; print('Flask version:', flask.__version__)"
+          Write-Host "🔍 验证 Flask 和 flask-cors 安装:"
+          & "vendor/windows/python/python.exe" -c "import flask; from flask_cors import CORS; print('Flask version:', flask.__version__)"
           
           Write-Host "✅ Python Embedded 安装完成"
           dir "vendor/windows/python"
@@ -212,7 +212,7 @@ jobs:
       
       - name: 🔧 安装 Python 依赖
         run: |
-          pip install flask pydub requests
+          pip install flask flask-cors pydub requests pysrt diff-match-patch
       
       - name: 📥 下载 FFmpeg (Linux)
         run: |

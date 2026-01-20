@@ -2,6 +2,10 @@
   "name": "pymediatools",
   "version": "2.0.2",
   "description": "统一媒体工具包 - 字幕对齐 + 媒体转换",
+  "author": {
+    "name": "TimCode",
+    "email": "pymediatools@example.com"
+  },
   "main": "electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -115,6 +119,13 @@
             "**/*",
             "!uploads/**",
             "!**/__pycache__/**"
+          ]
+        },
+        {
+          "from": "assets",
+          "to": "assets",
+          "filter": [
+            "**/*"
           ]
         },
         {

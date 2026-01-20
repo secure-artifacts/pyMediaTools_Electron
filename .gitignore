@@ -1,0 +1,66 @@
+# ==================== 依赖 ====================
+node_modules/
+.pnpm-store/
+
+# ==================== 构建产物 ====================
+dist/
+dist-electron/
+*.dmg
+*.zip
+*.AppImage
+*.deb
+*.exe
+
+# ==================== Python ====================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+ENV/
+
+# ==================== 日志和临时文件 ====================
+log/
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ==================== 上传目录（用户数据）====================
+backend/uploads/
+uploads/
+
+# ==================== 系统文件 ====================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ==================== IDE ====================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ==================== 环境变量 ====================
+.env
+.env.local
+.env.*.local
+
+# ==================== Electron Builder ====================
+builder-effective-config.yaml
+
+# ==================== Vendor（大文件，按需提交）====================
+# 如果 vendor 目录太大，可以取消下面的注释来忽略
+# vendor/windows/python/
+# vendor/windows/ffmpeg/
+# vendor/linux/
+# vendor/darwin/

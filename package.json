@@ -1,0 +1,103 @@
+{
+  "name": "pymediatools",
+  "version": "2.0.2",
+  "description": "统一媒体工具包 - 字幕对齐 + 媒体转换",
+  "main": "electron/main.js",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:web": "vite build",
+    "build:desktop": "npm run build && electron-builder",
+    "build:all": "npm run build && echo '✅ 网站版本已生成到 dist/' && electron-builder && echo '✅ 桌面版本已生成到 dist-electron/'",
+    "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
+    "electron:build": "npm run build && electron-builder",
+    "backend:start": "python3 backend/server.py",
+    "start": "concurrently \"npm run backend:start\" \"npm run electron:dev\"",
+    "pack:mac-arm64": "npm run build && electron-builder --mac --arm64",
+    "pack:mac-x64": "npm run build && electron-builder --mac --x64",
+    "pack:mac-universal": "npm run build && electron-builder --mac --arm64 --x64",
+    "pack:win-x64": "npm run build && electron-builder --win --x64",
+    "pack:linux-x64": "npm run build && electron-builder --linux --x64",
+    "pack:all": "npm run build && electron-builder --mac --arm64 --x64 --win --x64 --linux --x64"
+  },
+  "dependencies": {
+    "electron-store": "^8.1.0"
+  },
+  "devDependencies": {
+    "vite": "^5.0.0",
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1",
+    "concurrently": "^8.2.2",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.timcode.pymediatools",
+    "productName": "pyMediaTools",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "backend",
+        "to": "backend",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "vendor/windows",
+        "to": "vendor/windows",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "安装依赖.bat",
+        "to": "../安装依赖.bat"
+      }
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "assets/icon.icns",
+      "extraResources": [
+        {
+          "from": "backend",
+          "to": "backend",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        "zip"
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "assets/icon.png",
+      "category": "AudioVideo",
+      "extraResources": [
+        {
+          "from": "backend",
+          "to": "backend",
+          "filter": [
+            "**/*"
+          ]
+        }
+      ]
+    }
+  }
+}

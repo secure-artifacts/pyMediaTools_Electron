@@ -1,0 +1,155 @@
+# pyMediaTools 跨平台自动打包
+# 触发条件：推送 tag (如 v2.1.0) 或手动触发
+
+name: 🚀 Build All Platforms
+
+on:
+  # 推送版本标签时自动触发
+  push:
+    tags:
+      - 'v*'
+  
+  # 手动触发（在 GitHub 页面点击 Run workflow）
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号 (如 2.1.0)'
+        required: false
+        default: 'dev'
+
+# 并发控制：同一分支只运行一个工作流
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ==================== macOS 打包 ====================
+  build-mac:
+    name: 🍎 macOS (Intel + Apple Silicon)
+    runs-on: macos-latest
+    
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+      
+      - name: 📦 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: 🔧 安装依赖
+        run: npm ci
+      
+      - name: 🏗️ 构建前端
+        run: npm run build
+      
+      - name: 📦 打包 macOS (ARM64 + x64)
+        run: npx electron-builder --mac --arm64 --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: 📤 上传 macOS 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-builds
+          path: |
+            dist-electron/*.dmg
+            dist-electron/*.zip
+          retention-days: 30
+
+  # ==================== Windows 打包 ====================
+  build-windows:
+    name: 🪟 Windows (x64)
+    runs-on: windows-latest
+    
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+      
+      - name: 📦 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: 🔧 安装依赖
+        run: npm ci
+      
+      - name: 🏗️ 构建前端
+        run: npm run build
+      
+      - name: 📦 打包 Windows x64
+        run: npx electron-builder --win --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: 📤 上传 Windows 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-builds
+          path: |
+            dist-electron/*.zip
+            dist-electron/*.exe
+          retention-days: 30
+
+  # ==================== Linux 打包 ====================
+  build-linux:
+    name: 🐧 Linux (x64)
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 检出代码
+        uses: actions/checkout@v4
+      
+      - name: 📦 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: 🔧 安装依赖
+        run: npm ci
+      
+      - name: 🏗️ 构建前端
+        run: npm run build
+      
+      - name: 📦 打包 Linux x64
+        run: npx electron-builder --linux --x64
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: 📤 上传 Linux 产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-builds
+          path: |
+            dist-electron/*.AppImage
+            dist-electron/*.deb
+          retention-days: 30
+
+  # ==================== 创建 Release ====================
+  create-release:
+    name: 📢 创建 GitHub Release
+    needs: [build-mac, build-windows, build-linux]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+      - name: 📥 下载所有产物
+        uses: actions/download-artifact@v4
+        with:
+          path: all-builds
+          merge-multiple: true
+      
+      - name: 📋 列出文件
+        run: ls -la all-builds/
+      
+      - name: 🎉 创建 Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: all-builds/*
+          draft: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

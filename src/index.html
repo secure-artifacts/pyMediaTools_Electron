@@ -1,0 +1,1227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>pyMediaTools - 统一媒体工具包</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+  <div class="app">
+    <!-- 标题栏 -->
+    <header class="titlebar">
+      <div class="titlebar-drag-region"></div>
+      <h1 class="app-title">pyMediaTools - 统一媒体工具包</h1>
+    </header>
+
+    <!-- 标签页 -->
+    <nav class="tabs">
+      <button class="tab active" data-tab="voiceover-workflow">🚀 一键配音字幕</button>
+      <button class="tab" data-tab="elevenlabs">ElevenLabs</button>
+      <button class="tab" data-tab="subtitle">字幕对齐</button>
+      <button class="tab" data-tab="media">媒体转换</button>
+      <button class="tab" data-tab="srt-tools">SRT工具</button>
+      <button class="tab" data-tab="video-download">视频下载</button>
+      <button class="tab" data-tab="settings">设置</button>
+    </nav>
+
+    <!-- 内容区 -->
+    <main class="content">
+      <!-- ==================== 字幕对齐面板 ==================== -->
+      <section id="subtitle-panel" class="panel">
+        <div class="panel-content">
+          <!-- STEP 1 -->
+          <div class="form-section">
+            <h3 class="section-title">STEP 1: 选择音视频或JSON文件</h3>
+            <div class="file-input-group">
+              <input type="text" id="audio-path" class="input file-path"
+                placeholder="支持 MP4, MOV, MKV, WAV, MP3, M4A, FLV, AVI, WMV, JSON" readonly>
+              <input type="file" id="audio-file-input" class="hidden-file-input"
+                accept=".mp4,.mov,.mkv,.wav,.mp3,.m4a,.flv,.avi,.wmv,.json">
+              <button class="btn btn-secondary"
+                onclick="document.getElementById('audio-file-input').click()">选择文件</button>
+            </div>
+          </div>
+
+          <!-- STEP 2 -->
+          <div class="form-section">
+            <h3 class="section-title">STEP 2: 原文本 (断行后)</h3>
+            <div class="text-header">
+              <span>可直接粘贴文本或从文件加载:</span>
+              <div class="btn-group">
+                <button class="btn btn-small" onclick="clearText('source-text')">清空</button>
+                <input type="file" id="source-file-input" class="hidden-file-input" accept=".txt">
+                <button class="btn btn-small"
+                  onclick="document.getElementById('source-file-input').click()">从文件加载</button>
+              </div>
+            </div>
+            <textarea id="source-text" class="textarea" placeholder="在此粘贴断行后的原文本..." rows="5"></textarea>
+          </div>
+
+          <!-- STEP 3 -->
+          <div class="form-section">
+            <h3 class="section-title">STEP 3: 翻译文本 (断行后)</h3>
+            <div class="text-header">
+              <span>可直接粘贴文本或从文件加载:</span>
+              <div class="btn-group">
+                <button class="btn btn-small" onclick="clearText('translate-text')">清空</button>
+                <input type="file" id="translate-file-input" class="hidden-file-input" accept=".txt">
+                <button class="btn btn-small"
+                  onclick="document.getElementById('translate-file-input').click()">从文件加载</button>
+              </div>
+            </div>
+            <textarea id="translate-text" class="textarea" placeholder="在此粘贴断行后的翻译文本..." rows="5"></textarea>
+          </div>
+
+          <!-- STEP 4 -->
+          <div class="form-section">
+            <h3 class="section-title">STEP 4: 参数设置</h3>
+            <div class="params-grid">
+              <div class="param-row">
+                <label>选择语言:</label>
+                <select id="language" class="select">
+                  <option value="英语">英语</option>
+                  <option value="中文">中文</option>
+                  <option value="日语">日语</option>
+                  <option value="韩语">韩语</option>
+                  <option value="德语">德语</option>
+                  <option value="法语">法语</option>
+                  <option value="西班牙语">西班牙语</option>
+                </select>
+
+                <label>音频切分时长(分钟):</label>
+                <input type="number" id="cut-length" class="input input-small" value="5.0" step="0.5" min="1">
+              </div>
+
+              <div class="checkbox-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="seamless">
+                  <span>无缝达芬奇字幕</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="export-fcpxml">
+                  <span>导出达芬奇字幕</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="source-up">
+                  <span>原文本在上</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="merge-srt">
+                  <span>导出合并SRT</span>
+                </label>
+              </div>
+
+              <div class="checkbox-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="enable-replace">
+                  <span>启用翻译文本替换</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="ignore-case" checked>
+                  <span>替换时忽略大小写</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="preserve-spaces">
+                  <span>保留全角空格</span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- 状态 -->
+          <div class="form-section status-section">
+            <h3 class="section-title">状态</h3>
+            <div class="status-box">
+              <span id="status-text" class="status-text">就绪</span>
+              <div id="progress-bar" class="progress-bar hidden">
+                <div class="progress-bar-inner"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 批量模式切换 -->
+          <div class="form-section">
+            <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
+              <label class="checkbox-label" style="margin: 0;">
+                <input type="checkbox" id="subtitle-batch-mode" onchange="toggleSubtitleBatchMode()">
+                <span style="font-weight: 500;">📦 批量模式</span>
+              </label>
+              <span style="font-size: 12px; color: var(--text-secondary);">批量添加多个音频和对应字幕</span>
+            </div>
+          </div>
+
+          <!-- 批量任务列表（初始隐藏） -->
+          <div id="subtitle-batch-section" class="form-section hidden">
+            <h3 class="section-title">批量任务列表</h3>
+            <div class="param-row" style="margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+              <input type="file" id="batch-audio-input" class="hidden-file-input"
+                accept=".mp4,.mov,.mkv,.wav,.mp3,.m4a,.flv,.avi,.wmv,.json" multiple>
+              <button class="btn btn-secondary" onclick="document.getElementById('batch-audio-input').click()">
+                📁 添加音频
+              </button>
+              <button class="btn btn-primary" onclick="batchPasteSubtitleText('both')">📋 粘贴原文+译文</button>
+              <button class="btn btn-secondary" onclick="batchPasteSubtitleText('source')">📋 粘贴原文</button>
+              <button class="btn btn-secondary" onclick="batchPasteSubtitleText('translate')">📋 粘贴译文</button>
+              <button class="btn btn-secondary" onclick="clearSubtitleBatchList()">🧹 清空</button>
+              <span id="subtitle-batch-count"
+                style="font-size: 12px; color: var(--text-secondary); margin-left: auto;">0 个任务</span>
+            </div>
+            <div id="subtitle-batch-list"
+              style="max-height: 400px; overflow-y: auto; background: var(--bg-tertiary); border-radius: 8px; padding: 8px;">
+            </div>
+            <p class="hint" style="margin-top: 8px;">拖拽音频文件到此区域。从表格复制两列（原文+译文）后点粘贴按钮。</p>
+          </div>
+
+          <!-- 生成按钮 -->
+          <button id="generate-btn" class="btn btn-primary btn-large" onclick="startGeneration()">
+            🚀 生成字幕
+          </button>
+
+          <!-- 设置按钮 -->
+          <div class="settings-buttons">
+            <button class="btn btn-secondary" onclick="showGladiaKeysModal()">⚙️ 设置 Gladia Keys</button>
+            <button class="btn btn-secondary" onclick="showTransReplaceModal()">📝 翻译文本替换设置</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== SRT 工具面板 ==================== -->
+      <section id="srt-tools-panel" class="panel">
+        <div class="panel-content">
+          <!-- SRT 工具子标签 -->
+          <div class="sub-tabs">
+            <button class="sub-tab active" data-subtab="srt-adjust">时间调整</button>
+            <button class="sub-tab" data-subtab="srt-seamless">无缝字幕</button>
+          </div>
+
+          <!-- 时间调整 -->
+          <div id="srt-adjust-subtab" class="subtab-content active">
+            <div class="form-section">
+              <h3 class="section-title">源 SRT 文件</h3>
+              <div class="file-input-group">
+                <input type="text" id="srt-src-path" class="input file-path" placeholder="要调整时间的SRT文件" readonly>
+                <input type="file" id="srt-src-input" class="hidden-file-input" accept=".srt">
+                <button class="btn btn-secondary"
+                  onclick="document.getElementById('srt-src-input').click()">选择文件</button>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <h3 class="section-title">原 SRT 文件 (可选)</h3>
+              <div class="file-input-group">
+                <input type="text" id="srt-orgi-path" class="input file-path" placeholder="需要同步时间的原文SRT" readonly>
+                <input type="file" id="srt-orgi-input" class="hidden-file-input" accept=".srt">
+                <button class="btn btn-secondary"
+                  onclick="document.getElementById('srt-orgi-input').click()">选择文件</button>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <h3 class="section-title">参考 SRT 文件 (可选)</h3>
+              <div class="file-input-group">
+                <input type="text" id="srt-ref-path" class="input file-path" placeholder="用于计算字符时间的参考SRT" readonly>
+                <input type="file" id="srt-ref-input" class="hidden-file-input" accept=".srt">
+                <button class="btn btn-secondary"
+                  onclick="document.getElementById('srt-ref-input').click()">选择文件</button>
+              </div>
+            </div>
+
+            <div class="form-section">
+              <h3 class="section-title">时间参数</h3>
+              <div class="params-grid">
+                <div class="param-row">
+                  <label>间隔时间(秒):</label>
+                  <input type="number" id="interval-time" class="input input-small" value="1.0" step="0.01">
+
+                  <label>单字符时间(秒):</label>
+                  <input type="number" id="char-time" class="input input-small" value="0.1" step="0.001">
+
+                  <button class="btn btn-secondary" onclick="computeCharTime()">计算字符时间</button>
+                </div>
+                <div class="param-row">
+                  <label>短句子字符数:</label>
+                  <input type="number" id="min-char" class="input input-small" value="20">
+
+                  <label>字符时间倍数:</label>
+                  <input type="number" id="scale" class="input input-small" value="1.0" step="0.1">
+
+                  <label>排除字符:</label>
+                  <input type="text" id="ignore-chars" class="input" value='?—:„";/!' style="width: 120px;">
+                </div>
+              </div>
+            </div>
+
+            <button class="btn btn-primary btn-large" onclick="adjustSrt()">🚀 开始调整</button>
+          </div>
+
+          <!-- 无缝字幕 -->
+          <div id="srt-seamless-subtab" class="subtab-content">
+            <div class="form-section">
+              <p class="hint">将 SRT 字幕转换为无缝字幕，每条字幕的结束时间将与下一条字幕的开始时间相同。</p>
+              <div class="file-input-group">
+                <input type="text" id="seamless-srt-path" class="input file-path" placeholder="选择要处理的SRT文件" readonly>
+                <input type="file" id="seamless-srt-input" class="hidden-file-input" accept=".srt">
+                <button class="btn btn-secondary"
+                  onclick="document.getElementById('seamless-srt-input').click()">选择文件</button>
+              </div>
+            </div>
+
+            <button class="btn btn-primary btn-large" onclick="generateSeamlessSrt()">🚀 生成无缝字幕</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 媒体转换面板 ==================== -->
+      <section id="media-panel" class="panel">
+        <div class="panel-content">
+          <!-- 文件选择 -->
+          <div class="form-section">
+            <h3 class="section-title">输入文件</h3>
+            <div class="file-input-group" id="media-drop-zone"
+              style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 12px; transition: all 0.2s;">
+              <input type="text" id="media-input-path" class="input file-path" placeholder="选择或拖拽视频/音频/图片文件" readonly>
+              <input type="file" id="media-input-file" class="hidden-file-input" multiple>
+              <button class="btn btn-secondary"
+                onclick="document.getElementById('media-input-file').click()">选择文件</button>
+            </div>
+          </div>
+
+          <!-- 转换模块子标签 -->
+          <div class="sub-tabs">
+            <button class="sub-tab active" data-subtab="media-logo">🎨 Logo 叠加</button>
+            <button class="sub-tab" data-subtab="media-watermark">✏️ 文字水印</button>
+            <button class="sub-tab" data-subtab="media-format">🔧 格式转换</button>
+          </div>
+
+          <!-- ========== Logo 叠加模块 ========== -->
+          <div id="media-logo-subtab" class="subtab-content active">
+            <div class="form-section">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">预设 Logo（适用于竖屏 1080×1920）</h4>
+              <div class="mode-grid" style="grid-template-columns: repeat(3, 1fr);">
+                <label class="mode-option">
+                  <input type="radio" name="logo-preset" value="hailuo" checked>
+                  <span class="mode-label"><span class="mode-text">Dream+Hailuo</span></span>
+                </label>
+                <label class="mode-option">
+                  <input type="radio" name="logo-preset" value="vidu">
+                  <span class="mode-label"><span class="mode-text">Dream+Vidu</span></span>
+                </label>
+                <label class="mode-option">
+                  <input type="radio" name="logo-preset" value="veo">
+                  <span class="mode-label"><span class="mode-text">Dream+Veo</span></span>
+                </label>
+                <label class="mode-option">
+                  <input type="radio" name="logo-preset" value="heygen">
+                  <span class="mode-label"><span class="mode-text">Dream+HeyGen</span></span>
+                </label>
+                <label class="mode-option">
+                  <input type="radio" name="logo-preset" value="dream">
+                  <span class="mode-label"><span class="mode-text">Dreamina</span></span>
+                </label>
+                <label class="mode-option">
+                  <input type="radio" name="logo-preset" value="ai_generated">
+                  <span class="mode-label"><span class="mode-text">✨ AI Generated</span></span>
+                </label>
+                <label class="mode-option">
+                  <input type="radio" name="logo-preset" value="custom">
+                  <span class="mode-label"><span class="mode-text">📁 自定义 Logo</span></span>
+                </label>
+              </div>
+            </div>
+
+            <!-- 自定义 Logo 文件选择 (仅自定义模式) -->
+            <div id="custom-logo-options" class="form-section hidden">
+              <div class="param-row">
+                <label>Logo 图片:</label>
+                <input type="text" id="custom-logo-path" class="input file-path" placeholder="选择 PNG 图片" readonly
+                  style="flex: 1;">
+                <input type="file" id="custom-logo-file" class="hidden-file-input" accept=".png,.jpg,.jpeg">
+                <button class="btn btn-secondary"
+                  onclick="document.getElementById('custom-logo-file').click()">选择</button>
+              </div>
+            </div>
+
+            <!-- Logo 位置/尺寸微调 (所有预设通用) -->
+            <div class="form-section" style="margin-top: 12px;">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📐 位置与尺寸调整</h4>
+
+              <!-- 方向按钮调整位置 -->
+              <div style="display: flex; align-items: center; gap: 20px; margin-bottom: 12px;">
+                <div style="display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                  <button class="btn btn-secondary" onclick="adjustLogoPos(0, -10)"
+                    style="padding: 6px 12px;">⬆️</button>
+                  <div style="display: flex; gap: 4px;">
+                    <button class="btn btn-secondary" onclick="adjustLogoPos(-10, 0)"
+                      style="padding: 6px 12px;">⬅️</button>
+                    <button class="btn btn-secondary" onclick="adjustLogoPos(10, 0)"
+                      style="padding: 6px 12px;">➡️</button>
+                  </div>
+                  <button class="btn btn-secondary" onclick="adjustLogoPos(0, 10)"
+                    style="padding: 6px 12px;">⬇️</button>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <label style="width: 50px;">X:</label>
+                    <input type="number" id="logo-pos-x" class="input input-small" value="590" style="width: 80px;">
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <label style="width: 50px;">Y:</label>
+                    <input type="number" id="logo-pos-y" class="input input-small" value="1810" style="width: 80px;">
+                  </div>
+                </div>
+                <div style="display: flex; flex-direction: column; gap: 8px;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <label style="width: 50px;">宽:</label>
+                    <input type="range" id="logo-width-range" min="50" max="600" value="400" style="width: 100px;"
+                      oninput="document.getElementById('logo-width').value=this.value; updateLogoPreview();">
+                    <input type="number" id="logo-width" class="input input-small" value="400" style="width: 70px;"
+                      oninput="document.getElementById('logo-width-range').value=this.value; updateLogoPreview();">
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <label style="width: 50px;">高:</label>
+                    <input type="range" id="logo-height-range" min="20" max="200" value="90" style="width: 100px;"
+                      oninput="document.getElementById('logo-height').value=this.value; updateLogoPreview();">
+                    <input type="number" id="logo-height" class="input input-small" value="90" style="width: 70px;"
+                      oninput="document.getElementById('logo-height-range').value=this.value; updateLogoPreview();">
+                  </div>
+                </div>
+                <button class="btn btn-secondary" onclick="resetLogoPosition()"
+                  style="font-size: 12px; align-self: flex-start;">🔄 重置</button>
+              </div>
+              <p class="hint">提示: 点击方向按钮每次移动 10px，也可直接输入精确数值</p>
+            </div>
+
+            <!-- Logo 预览区 -->
+            <div class="form-section" style="margin-top: 16px;">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📺 效果预览（竖屏 9:16）</h4>
+              <div style="display: flex; justify-content: center; gap: 16px;">
+                <!-- 深色背景预览 -->
+                <div style="text-align: center;">
+                  <div id="logo-preview-dark"
+                    style="position: relative; width: 135px; height: 240px; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); border-radius: 8px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+                    <canvas id="logo-preview-canvas" width="135" height="240"
+                      style="width: 100%; height: 100%;"></canvas>
+                  </div>
+                  <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">深色背景</span>
+                </div>
+                <!-- 浅色背景预览 -->
+                <div style="text-align: center;">
+                  <div id="logo-preview-light"
+                    style="position: relative; width: 135px; height: 240px; background: linear-gradient(135deg, #f5f7fa 0%, #e4e9f2 50%, #c3cfe2 100%); border-radius: 8px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+                    <canvas id="logo-preview-canvas-light" width="135" height="240"
+                      style="width: 100%; height: 100%;"></canvas>
+                  </div>
+                  <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">浅色背景</span>
+                </div>
+              </div>
+              <div style="text-align: center; margin-top: 8px;">
+                <button class="btn btn-secondary" onclick="updateLogoPreview()"
+                  style="font-size: 12px; padding: 6px 12px;">🔄 刷新预览</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- ========== 文字水印模块 ========== -->
+          <div id="media-watermark-subtab" class="subtab-content">
+            <div class="form-section">
+              <div class="param-row" style="flex-wrap: wrap; gap: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>预设:</label>
+                  <select id="watermark-preset" class="select" style="width: 200px;">
+                    <option value="">-- 选择预设 --</option>
+                    <option value="AI Generated" selected>AI Generated</option>
+                    <option value="Generated With AI">Generated With AI</option>
+                    <option value="AI-Generated Image">AI-Generated Image</option>
+                    <option value="Image generated with AI">Image generated with AI</option>
+                    <option value="AI Created">AI Created</option>
+                    <option value="Picture from AI">Picture from AI</option>
+                    <option value="Attribution to 11.ai">Attribution to 11.ai</option>
+                    <option value="Made with AI">Made with AI</option>
+                    <option value="AI Powered">AI Powered</option>
+                  </select>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px; flex: 1;">
+                  <label>自定义:</label>
+                  <input type="text" id="watermark-text" class="input" value="AI Generated" placeholder="输入水印内容"
+                    style="flex: 1;">
+                </div>
+                <button class="btn btn-secondary" onclick="saveWatermarkSettings()" style="font-size: 12px;">💾
+                  保存设置</button>
+              </div>
+
+              <div class="param-row" style="flex-wrap: wrap; gap: 12px; margin-top: 12px;">
+                <!-- 字体选择 -->
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>字体:</label>
+                  <select id="watermark-font" class="select" style="width: 150px;">
+                    <option value="Arial" selected>Arial</option>
+                    <option value="Helvetica">Helvetica</option>
+                    <option value="Times New Roman">Times New Roman</option>
+                    <option value="Georgia">Georgia</option>
+                    <option value="Verdana">Verdana</option>
+                    <option value="Courier New">Courier New</option>
+                    <option value="Impact">Impact</option>
+                    <option value="Comic Sans MS">Comic Sans MS</option>
+                    <option value="Microsoft YaHei">微软雅黑</option>
+                    <option value="PingFang SC">苹方</option>
+                    <option value="SimHei">黑体</option>
+                    <option value="SimSun">宋体</option>
+                  </select>
+                </div>
+                <!-- 字体大小 -->
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>字号:</label>
+                  <input type="number" id="watermark-fontsize" class="input input-small" value="8" min="4" max="200"
+                    style="width: 70px;">
+                </div>
+                <!-- 字体颜色 -->
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>颜色:</label>
+                  <input type="color" id="watermark-color" value="#ffffff"
+                    style="width: 40px; height: 32px; border: none; cursor: pointer;">
+                  <input type="text" id="watermark-color-text" class="input input-small" value="#ffffff"
+                    style="width: 80px;">
+                </div>
+                <!-- 透明度 -->
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>透明度:</label>
+                  <input type="range" id="watermark-opacity" min="0" max="1" step="0.1" value="0.5"
+                    style="width: 80px;">
+                  <span id="watermark-opacity-label">50%</span>
+                </div>
+              </div>
+
+              <div class="param-row" style="flex-wrap: wrap; gap: 12px; margin-top: 12px;">
+                <!-- 描边 -->
+                <label class="checkbox-label">
+                  <input type="checkbox" id="watermark-stroke" checked>
+                  <span>描边</span>
+                </label>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>描边颜色:</label>
+                  <input type="color" id="watermark-stroke-color" value="#000000"
+                    style="width: 40px; height: 32px; border: none; cursor: pointer;">
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>描边宽度:</label>
+                  <input type="number" id="watermark-stroke-width" class="input input-small" value="5" min="0" max="10"
+                    style="width: 60px;">
+                </div>
+                <!-- 阴影 -->
+                <label class="checkbox-label">
+                  <input type="checkbox" id="watermark-shadow">
+                  <span>阴影</span>
+                </label>
+              </div>
+
+              <div class="param-row" style="margin-top: 12px; flex-wrap: wrap; gap: 12px; align-items: flex-start;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>位置:</label>
+                  <select id="watermark-position" class="select" style="width: 110px;">
+                    <option value="top-right" selected>右上角</option>
+                    <option value="top-left">左上角</option>
+                    <option value="bottom-right">右下角</option>
+                    <option value="bottom-left">左下角</option>
+                    <option value="center">居中</option>
+                    <option value="custom">自定义</option>
+                  </select>
+                </div>
+
+                <!-- 方向按钮微调偏移 -->
+                <div style="display: flex; align-items: center; gap: 12px;">
+                  <div style="display: flex; flex-direction: column; align-items: center; gap: 2px;">
+                    <button class="btn btn-secondary" onclick="adjustWatermarkOffset(0, -5)"
+                      style="padding: 4px 8px; font-size: 12px;">⬆️</button>
+                    <div style="display: flex; gap: 2px;">
+                      <button class="btn btn-secondary" onclick="adjustWatermarkOffset(-5, 0)"
+                        style="padding: 4px 8px; font-size: 12px;">⬅️</button>
+                      <button class="btn btn-secondary" onclick="adjustWatermarkOffset(5, 0)"
+                        style="padding: 4px 8px; font-size: 12px;">➡️</button>
+                    </div>
+                    <button class="btn btn-secondary" onclick="adjustWatermarkOffset(0, 5)"
+                      style="padding: 4px 8px; font-size: 12px;">⬇️</button>
+                  </div>
+                  <div style="display: flex; flex-direction: column; gap: 4px;">
+                    <div style="display: flex; align-items: center; gap: 4px;">
+                      <label style="font-size: 12px;">X:</label>
+                      <input type="number" id="watermark-offset-x" class="input input-small" value="10"
+                        style="width: 55px;">
+                      <span style="color: var(--text-muted); font-size: 11px;">px</span>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 4px;">
+                      <label style="font-size: 12px;">Y:</label>
+                      <input type="number" id="watermark-offset-y" class="input input-small" value="10"
+                        style="width: 55px;">
+                      <span style="color: var(--text-muted); font-size: 11px;">px</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="param-row" style="margin-top: 8px;">
+                <div id="watermark-custom-pos" style="display: none; align-items: center; gap: 8px;">
+                  <label>自定义 X:</label>
+                  <input type="text" id="watermark-pos-x" class="input input-small" value="w-tw-10"
+                    style="width: 100px;">
+                  <label>Y:</label>
+                  <input type="text" id="watermark-pos-y" class="input input-small" value="10" style="width: 80px;">
+                </div>
+              </div>
+              <p class="hint" style="margin-top: 8px;">提示: 点击方向按钮每次移动 5px，偏移值为距离边缘的像素数</p>
+
+              <!-- 水印预览区 -->
+              <div class="form-section" style="margin-top: 16px;">
+                <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📺 效果预览（竖屏 9:16）</h4>
+                <div style="display: flex; justify-content: center; gap: 16px;">
+                  <!-- 深色背景预览 -->
+                  <div style="text-align: center;">
+                    <div id="watermark-preview-dark"
+                      style="position: relative; width: 135px; height: 240px; background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); border-radius: 8px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.3);">
+                      <canvas id="watermark-preview-canvas" width="135" height="240"
+                        style="width: 100%; height: 100%;"></canvas>
+                    </div>
+                    <span
+                      style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">深色背景</span>
+                  </div>
+                  <!-- 浅色背景预览 -->
+                  <div style="text-align: center;">
+                    <div id="watermark-preview-light"
+                      style="position: relative; width: 135px; height: 240px; background: linear-gradient(135deg, #f5f7fa 0%, #e4e9f2 50%, #c3cfe2 100%); border-radius: 8px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.15);">
+                      <canvas id="watermark-preview-canvas-light" width="135" height="240"
+                        style="width: 100%; height: 100%;"></canvas>
+                    </div>
+                    <span
+                      style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">浅色背景</span>
+                  </div>
+                </div>
+                <div style="text-align: center; margin-top: 8px;">
+                  <button class="btn btn-secondary" onclick="updateWatermarkPreview()"
+                    style="font-size: 12px; padding: 6px 12px;">🔄 刷新预览</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ========== 格式转换模块 ========== -->
+          <div id="media-format-subtab" class="subtab-content">
+            <div class="form-section">
+              <div class="mode-grid">
+                <!-- 视频编码 -->
+                <label class="mode-option">
+                  <input type="radio" name="format-mode" value="h264" checked>
+                  <span class="mode-label">
+                    <span class="mode-icon">🎬</span>
+                    <span class="mode-text">H.264 (MP4)</span>
+                  </span>
+                </label>
+                <label class="mode-option">
+                  <input type="radio" name="format-mode" value="x264">
+                  <span class="mode-label">
+                    <span class="mode-icon">🎬</span>
+                    <span class="mode-text">H.264 压缩</span>
+                  </span>
+                </label>
+                <label class="mode-option">
+                  <input type="radio" name="format-mode" value="dnxhr">
+                  <span class="mode-label">
+                    <span class="mode-icon">🎥</span>
+                    <span class="mode-text">DNxHR (MOV)</span>
+                  </span>
+                </label>
+                <label class="mode-option">
+                  <input type="radio" name="format-mode" value="dnxhr_hqx">
+                  <span class="mode-label">
+                    <span class="mode-icon">🎥</span>
+                    <span class="mode-text">DNxHR 10bit</span>
+                  </span>
+                </label>
+                <!-- 图片/音频 -->
+                <label class="mode-option">
+                  <input type="radio" name="format-mode" value="png">
+                  <span class="mode-label">
+                    <span class="mode-icon">🖼️</span>
+                    <span class="mode-text">图片转 PNG</span>
+                  </span>
+                </label>
+                <label class="mode-option">
+                  <input type="radio" name="format-mode" value="mp3">
+                  <span class="mode-label">
+                    <span class="mode-icon">🎧</span>
+                    <span class="mode-text">音频转 MP3</span>
+                  </span>
+                </label>
+                <label class="mode-option">
+                  <input type="radio" name="format-mode" value="wav">
+                  <span class="mode-label">
+                    <span class="mode-icon">📻</span>
+                    <span class="mode-text">音频转 WAV</span>
+                  </span>
+                </label>
+                <label class="mode-option">
+                  <input type="radio" name="format-mode" value="audio_black">
+                  <span class="mode-label">
+                    <span class="mode-icon">⬛</span>
+                    <span class="mode-text">音频转黑屏 MP4 (H.264)</span>
+                  </span>
+                </label>
+                <label class="mode-option">
+                  <input type="radio" name="format-mode" value="audio_split">
+                  <span class="mode-label">
+                    <span class="mode-icon">✂️</span>
+                    <span class="mode-text">音频裁切导出 (双声道)</span>
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <div id="audio-split-options" class="form-section hidden">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">🎵 音频裁切设置</h4>
+
+              <!-- 音频预览播放器 -->
+              <div id="audio-preview-player" class="audio-preview-section"
+                style="display: none; margin-bottom: 16px; padding: 12px; background: var(--bg-tertiary); border-radius: 8px;">
+                <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
+                  <span id="audio-preview-name"
+                    style="font-size: 13px; color: var(--text-secondary); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">未选择文件</span>
+                  <span id="audio-preview-duration" style="font-size: 12px; color: var(--text-muted);">00:00 /
+                    00:00</span>
+                </div>
+
+                <!-- 波形可视化 -->
+                <div id="audio-waveform-container"
+                  style="position: relative; height: 60px; margin-bottom: 8px; background: var(--bg-secondary); border-radius: 4px; overflow: hidden; cursor: pointer;">
+                  <canvas id="audio-waveform-canvas" style="width: 100%; height: 100%;"></canvas>
+                  <div id="audio-waveform-progress"
+                    style="position: absolute; left: 0; top: 0; bottom: 0; width: 0%; background: rgba(102, 126, 234, 0.3); pointer-events: none;">
+                  </div>
+                  <div id="audio-waveform-cursor"
+                    style="position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--accent); pointer-events: none;">
+                  </div>
+                  <div id="audio-waveform-loading"
+                    style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 12px;">
+                    加载波形中...</div>
+                </div>
+
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <button id="audio-preview-play" class="btn btn-secondary" style="padding: 6px 12px;"
+                    onclick="toggleAudioPreview()">▶️</button>
+                  <input type="range" id="audio-preview-seek" min="0" max="100" value="0"
+                    style="flex: 1; cursor: pointer;">
+                  <button class="btn btn-primary" style="padding: 6px 12px; font-size: 12px;"
+                    onclick="addCutPointAtCurrentTime()" title="在当前位置添加裁切点">✂️ 添加裁切点</button>
+                </div>
+                <audio id="audio-preview-element" style="display: none;"></audio>
+              </div>
+
+              <!-- 智能分割工具栏 -->
+              <div class="smart-split-toolbar"
+                style="margin: 16px 0; padding: 12px; background: var(--bg-tertiary); border-radius: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 12px;">
+                <span style="font-size: 13px; color: var(--text-secondary);">🤖 智能分割</span>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                  <span style="font-size: 12px; color: var(--text-muted);">最大时长:</span>
+                  <input type="number" id="smart-split-max-duration" value="29" min="5" max="120"
+                    style="width: 50px; padding: 4px 6px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); background: var(--bg-secondary); color: var(--text-primary); font-size: 12px;">
+                  <span style="font-size: 12px; color: var(--text-muted);">秒</span>
+                </div>
+                <button class="btn btn-primary" id="smart-split-analyze-btn"
+                  style="padding: 6px 12px; font-size: 12px;">
+                  🔍 批量分析分割点
+                </button>
+                <span id="smart-split-status"
+                  style="font-size: 11px; color: var(--text-muted); margin-left: auto;"></span>
+              </div>
+
+              <p class="hint" style="margin-bottom: 8px;">每个文件显示独立的波形和分割点。点击播放按钮可预览，直接编辑分割点输入框。</p>
+
+              <!-- 文件卡片列表 -->
+              <div id="audio-split-file-list" class="split-file-list"
+                style="display: flex; flex-direction: column; gap: 12px;">
+                <p class="hint">请先选择文件。</p>
+              </div>
+
+              <div class="checkbox-row" style="margin-top: 12px;">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="export-split-mp3" checked>
+                  导出 MP3 (双声道，按裁切点分段)
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="export-split-mp4" checked>
+                  导出黑屏 MP4 (原始完整音频，不裁切)
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- 输出目录 -->
+          <div class="form-section">
+            <h3 class="section-title">输出目录</h3>
+            <div class="file-input-group">
+              <input type="text" id="media-output-path" class="input file-path" placeholder="默认与源文件相同目录">
+              <button class="btn btn-secondary" onclick="selectMediaOutputDir()">选择目录</button>
+            </div>
+          </div>
+
+          <!-- 状态 -->
+          <div class="form-section status-section">
+            <div class="status-box">
+              <span id="media-status" class="status-text">就绪</span>
+              <div id="media-progress" class="progress-bar hidden">
+                <div class="progress-bar-inner" style="width: 0%;"></div>
+              </div>
+            </div>
+          </div>
+
+          <button class="btn btn-primary btn-large" onclick="startMediaConvert()">🚀 开始转换</button>
+        </div>
+      </section>
+
+      <!-- ==================== ElevenLabs 面板 ==================== -->
+      <section id="elevenlabs-panel" class="panel">
+        <div class="panel-content">
+          <!-- API 配置区 -->
+          <div class="form-section">
+            <h3 class="section-title">API 配置</h3>
+            <div class="param-row" style="align-items: flex-start;">
+              <label>API Keys:</label>
+              <textarea id="elevenlabs-api-keys" class="textarea" rows="3" placeholder="一行一个 API Key"
+                style="flex: 1;"></textarea>
+              <div class="btn-group" style="flex-direction: column;">
+                <button class="btn btn-secondary" onclick="saveElevenLabsKey()">💾 保存</button>
+                <button class="btn btn-secondary" onclick="loadVoices()">🔄 刷新配置</button>
+              </div>
+            </div>
+            <p class="hint">默认使用第一行 Key；批量生成可在每行指定 Key 序号。</p>
+            <!-- 额度显示 -->
+            <div class="param-row" style="margin-top: 12px;">
+              <label>额度汇总:</label>
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 6px;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                  <div id="quota-bar"
+                    style="flex: 1; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden;">
+                    <div id="quota-bar-inner"
+                      style="width: 0%; height: 100%; background: linear-gradient(135deg, #00d9a5, #00b4d8); transition: width 0.3s;">
+                    </div>
+                  </div>
+                  <span id="quota-text" style="font-size: 13px; color: var(--text-secondary);">-- / --</span>
+                  <button class="btn btn-secondary" style="padding: 4px 8px; font-size: 11px;"
+                    onclick="loadAllQuotas()">📊 查看全部</button>
+                </div>
+                <div id="quota-meta" style="font-size: 12px; color: var(--text-secondary);">--</div>
+              </div>
+            </div>
+
+            <!-- 所有 Key 额度列表（初始隐藏） -->
+            <div id="all-keys-quota" class="hidden"
+              style="margin-top: 12px; background: var(--bg-tertiary); border-radius: 8px; padding: 12px; max-height: 200px; overflow-y: auto;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                <span style="font-weight: 500; color: var(--text-primary);">📊 所有 API Key 额度</span>
+                <button class="btn btn-secondary" style="padding: 2px 8px; font-size: 11px;"
+                  onclick="document.getElementById('all-keys-quota').classList.add('hidden')">关闭</button>
+              </div>
+              <div id="all-keys-list"></div>
+            </div>
+          </div>
+
+          <!-- TTS 文本转语音区域 -->
+          <div class="form-section">
+            <h3 class="section-title">🗣️ 文本转语音 (TTS)</h3>
+
+            <!-- 搜索声音 -->
+            <div class="param-row" style="margin-bottom: 12px;">
+              <label>搜索声音:</label>
+              <input type="text" id="voice-search-input" class="input" placeholder="输入名字搜索声音库..." style="flex: 1;">
+              <button class="btn btn-secondary" onclick="searchVoices()">🔍 搜索</button>
+            </div>
+
+            <!-- 搜索结果列表 -->
+            <div id="voice-search-results" class="hidden"
+              style="margin-bottom: 12px; max-height: 200px; overflow-y: auto; background: var(--bg-tertiary); border-radius: 8px; padding: 8px;">
+            </div>
+
+            <!-- 选择语音 -->
+            <div class="param-row" style="margin-bottom: 12px;">
+              <label>选择语音:</label>
+              <select id="voice-select" class="select" style="flex: 1;">
+                <option value="">请先刷新配置或搜索声音...</option>
+              </select>
+              <button class="btn btn-secondary" onclick="previewVoice()">🔊 试听</button>
+            </div>
+
+            <!-- 模型选择 -->
+            <div class="param-row" style="margin-bottom: 12px;">
+              <label>模型:</label>
+              <select id="model-select" class="select" style="flex: 1;">
+                <option value="eleven_v3" selected>🆕 Eleven v3 (Alpha, 最自然)</option>
+                <option value="eleven_multilingual_v2">Multilingual v2 (多语言)</option>
+                <option value="eleven_flash_v2_5">Flash v2.5 (快速，低延迟)</option>
+                <option value="eleven_turbo_v2_5">Turbo v2.5 (平衡速度与质量)</option>
+                <option value="eleven_turbo_v2">Turbo v2 (经典快速)</option>
+                <option value="eleven_multilingual_v1">Multilingual v1 (旧版多语言)</option>
+                <option value="eleven_monolingual_v1">English v1 (仅英语)</option>
+              </select>
+            </div>
+
+            <!-- 文本输入 -->
+            <textarea id="tts-text" class="textarea" placeholder="请输入要转换的文本内容..." rows="4"></textarea>
+
+            <!-- 字幕断行（可选） -->
+            <div class="param-row" style="margin-top: 12px; align-items: center;">
+              <span style="font-size: 13px; color: var(--text-secondary);">📝 字幕断行（可选）</span>
+              <span style="font-size: 11px; color: #ffa502; margin-left: 6px;">⚠️ 自动识别可能不准确</span>
+              <button class="btn btn-secondary" onclick="autoBreakSubtitle()" style="margin-left: 12px;">✨ 自动断行</button>
+              <input type="range" id="subtitle-max-chars" min="20" max="120" value="60"
+                style="width: 120px; margin-left: 12px;">
+              <span id="max-chars-label" style="font-size: 13px; color: var(--text-secondary); min-width: 80px;">60
+                字符/行</span>
+              <span style="font-size: 11px; color: var(--text-muted); margin-left: 8px;">留空则自动</span>
+            </div>
+            <textarea id="subtitle-text" class="textarea"
+              placeholder="在这里输入分好行的字幕文本（可选）...&#10;每行将成为一条字幕，时间自动匹配。&#10;&#10;点击「✨ 自动断行」可自动从上方文本识别句子。" rows="4"
+              style="margin-top: 8px;"></textarea>
+
+            <!-- TTS 保存路径与生成 -->
+            <div class="param-row" style="margin-top: 12px;">
+              <label>保存至:</label>
+              <input type="text" id="tts-save-path" class="input" placeholder="自动生成文件名" style="flex: 1;">
+              <button class="btn btn-secondary" onclick="browseTtsSavePath()">...</button>
+              <button class="btn btn-primary" onclick="generateTTS()">生成语音</button>
+            </div>
+          </div>
+
+          <div class="form-section">
+            <h3 class="section-title">🧰 批量生成 (TTS)</h3>
+            <div class="param-row" style="margin-bottom: 12px;">
+              <label class="checkbox-label">
+                <input type="checkbox" id="tts-batch-use-same" checked>
+                <span>使用同一语音</span>
+              </label>
+              <select id="tts-batch-voice" class="select" style="flex: 1;">
+                <option value="">请先刷新语音...</option>
+              </select>
+            </div>
+            <div id="tts-batch-list" class="batch-list"></div>
+            <div class="param-row" style="margin-top: 12px; flex-wrap: wrap; gap: 8px;">
+              <button id="tts-batch-add" class="btn btn-secondary">➕ 添加</button>
+              <button id="tts-batch-paste" class="btn btn-secondary">📋 从表格粘贴</button>
+              <button id="tts-batch-clear" class="btn btn-secondary">🧹 清空</button>
+              <button id="tts-batch-generate" class="btn btn-primary">🚀 批量生成</button>
+              <label
+                style="display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-secondary); margin-left: auto;">
+                <input type="checkbox" id="tts-circuit-breaker">
+                <span title="检测到账号异常活动时立即停止所有任务">🛡️ 风控熔断保护</span>
+              </label>
+            </div>
+            <p class="hint">每条任务一段文本，可单独选择语音；勾选“使用同一语音”后全部使用上方语音。余额不足时自动切换 Key，失败任务会自动重试。</p>
+          </div>
+
+          <!-- 分割线 -->
+          <div style="height: 1px; background: rgba(128,128,128,0.3); margin: 20px 0;"></div>
+
+          <!-- SFX 音效生成区域 -->
+          <div class="form-section">
+            <h3 class="section-title">🎵 音效生成 (SFX)</h3>
+
+            <div style="display: flex; gap: 12px; align-items: flex-start;">
+              <textarea id="sfx-prompt" class="textarea" placeholder="描述音效，例如: footsteps on wood floor..." rows="3"
+                style="flex: 1;"></textarea>
+              <div style="display: flex; flex-direction: column; gap: 8px; min-width: 100px;">
+                <label style="font-size: 13px;">时长:</label>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                  <input type="number" id="sfx-duration" class="input input-small" value="5" min="1" max="22"
+                    style="width: 60px;">
+                  <span style="font-size: 13px;">秒</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- SFX 保存路径与生成 -->
+            <div class="param-row" style="margin-top: 12px;">
+              <label>保存至:</label>
+              <input type="text" id="sfx-save-path" class="input" placeholder="自动生成文件名" style="flex: 1;">
+              <button class="btn btn-secondary" onclick="browseSfxSavePath()">...</button>
+              <button class="btn btn-primary" onclick="generateSFX()">生成音效</button>
+            </div>
+          </div>
+
+          <!-- 底部播放控制条 -->
+          <div class="playback-panel"
+            style="margin-top: 20px; padding: 12px 16px; background: rgba(0,0,0,0.3); border-radius: 8px; display: flex; align-items: center; gap: 12px;">
+            <button id="btn-play" class="btn btn-secondary" onclick="togglePlayback()" disabled
+              style="min-width: 80px;">▶ 播放</button>
+            <span id="current-time" style="font-size: 13px; color: var(--text-secondary); min-width: 45px;">00:00</span>
+            <input type="range" id="seek-slider" min="0" max="100" value="0" disabled style="flex: 1;">
+            <span id="total-time" style="font-size: 13px; color: var(--text-secondary); min-width: 45px;">00:00</span>
+            <span id="elevenlabs-status"
+              style="font-size: 13px; color: var(--text-secondary); font-style: italic;">就绪</span>
+          </div>
+
+          <!-- 隐藏的 audio 元素用于播放 -->
+          <audio id="tts-audio" class="hidden"></audio>
+        </div>
+      </section>
+
+      <!-- ==================== 一键配音字幕面板 ==================== -->
+      <section id="voiceover-workflow-panel" class="panel active">
+        <div class="panel-content">
+          <!-- 工具栏 -->
+          <div class="form-section">
+            <h3 class="section-title">🚀 一键配音字幕</h3>
+            <p class="hint">自动完成：生成配音 → 智能拆分 → 生成字幕</p>
+
+            <div class="param-row" style="flex-wrap: wrap; gap: 12px; margin-top: 12px;">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <label>默认音色:</label>
+                <select id="vw-default-voice" class="select" style="width: 200px;">
+                  <option value="">请先刷新...</option>
+                </select>
+                <button class="btn btn-secondary" onclick="refreshVWVoices()">🔄</button>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <label>模型:</label>
+                <select id="vw-model" class="select" style="width: 180px;">
+                  <option value="eleven_v3" selected>🆕 Eleven v3 (支持标签)</option>
+                  <option value="eleven_multilingual_v2">Multilingual v2</option>
+                  <option value="eleven_flash_v2_5">Flash v2.5 (快速)</option>
+                  <option value="eleven_turbo_v2_5">Turbo v2.5</option>
+                </select>
+              </div>
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <label>最大片段:</label>
+                <input type="number" id="vw-max-duration" class="input" value="30" min="5" max="120"
+                  style="width: 80px;">
+                <span style="color: var(--text-muted);">秒</span>
+              </div>
+            </div>
+
+            <!-- 输出目录 -->
+            <div class="param-row" style="margin-top: 12px;">
+              <label>输出目录:</label>
+              <input type="text" id="vw-output-dir" class="input" style="flex: 1;" placeholder="默认: ~/Downloads/日期_一键配音"
+                value="">
+              <button class="btn btn-secondary" onclick="vwBrowseOutputDir()">📁 浏览</button>
+              <button class="btn btn-secondary" onclick="vwOpenOutputDir()" title="在 Finder 中打开输出文件夹">📂 打开</button>
+            </div>
+          </div>
+
+          <!-- 数据输入 -->
+          <div class="form-section">
+            <div class="param-row" style="margin-bottom: 8px;">
+              <button class="btn btn-secondary" onclick="vwPasteFromClipboard()">📋 从表格粘贴</button>
+              <button class="btn btn-secondary" onclick="vwClearAll()">🧹 清空</button>
+              <span style="margin-left: auto; font-size: 12px; color: var(--text-muted);">
+                格式: 带标签文案 | 断行字幕 | 音色ID(可选)
+              </span>
+            </div>
+
+            <!-- 全选控制 -->
+            <div class="param-row" style="gap: 12px; margin-bottom: 8px;">
+              <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;">
+                <input type="checkbox" id="vw-select-all-split" checked onchange="vwToggleAllSplit()"
+                  style="cursor: pointer;">
+                <span>全选拆分</span>
+              </label>
+              <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;">
+                <input type="checkbox" id="vw-select-all-mp4" onchange="vwToggleAllMp4()" style="cursor: pointer;">
+                <span>全选黑屏MP4</span>
+              </label>
+              <button class="btn btn-secondary" style="font-size: 11px; padding: 2px 8px;"
+                onclick="vwInvertSplit()">反选拆分</button>
+              <span id="vw-task-count" style="margin-left: auto; font-size: 12px; color: var(--text-muted);"></span>
+            </div>
+          </div>
+
+          <!-- 任务列表 -->
+          <div id="vw-task-list" class="form-section"
+            style="max-height: 400px; overflow-y: auto; padding: 8px; background: var(--bg-tertiary); border-radius: 8px;">
+            <p class="hint" style="text-align: center;">请从表格粘贴数据...</p>
+          </div>
+
+          <!-- 执行按钮 -->
+          <div class="form-section" style="margin-top: 16px;">
+            <div class="param-row">
+              <button class="btn btn-primary" id="vw-start-btn" onclick="startVoiceoverWorkflow()" disabled>
+                🚀 开始生成配音字幕
+              </button>
+              <div id="vw-progress" style="flex: 1; margin-left: 16px; display: none;">
+                <div style="display: flex; justify-content: space-between; font-size: 12px; margin-bottom: 4px;">
+                  <span id="vw-progress-text">准备中...</span>
+                  <span id="vw-progress-percent">0%</span>
+                </div>
+                <div style="height: 6px; background: var(--bg-secondary); border-radius: 3px; overflow: hidden;">
+                  <div id="vw-progress-bar"
+                    style="height: 100%; width: 0%; background: var(--accent); transition: width 0.3s;"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 视频下载面板 ==================== -->
+      <section id="video-download-panel" class="panel">
+        <div class="panel-content">
+          <!-- STEP 1: URL 解析 -->
+          <div class="form-section">
+            <h3 class="section-title">STEP 1: 视频链接解析</h3>
+            <div class="file-input-group">
+              <input type="text" id="video-url" class="input" placeholder="粘贴 YouTube/Bilibili 等视频或播放列表链接...">
+              <button class="btn btn-secondary" onclick="analyzeVideoUrl()" id="btn-analyze">🔍 解析链接</button>
+            </div>
+          </div>
+
+          <!-- 视频列表区域 -->
+          <div class="form-section" id="video-list-section" style="display: none;">
+            <div class="param-row" style="margin-bottom: 8px;">
+              <label class="checkbox-label">
+                <input type="checkbox" id="select-all-videos" checked onchange="toggleSelectAllVideos()">
+                <span>全选/取消全选</span>
+              </label>
+              <span id="video-count" style="margin-left: auto; color: var(--text-secondary); font-size: 13px;"></span>
+            </div>
+            <div id="video-table-container"
+              style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 8px;">
+              <table id="video-table" style="width: 100%; border-collapse: collapse;">
+                <thead style="position: sticky; top: 0; background: var(--bg-tertiary);">
+                  <tr>
+                    <th style="width: 40px; padding: 8px; text-align: center;"></th>
+                    <th style="padding: 8px; text-align: left;">标题</th>
+                    <th style="width: 80px; padding: 8px; text-align: center;">时长</th>
+                    <th style="width: 100px; padding: 8px; text-align: center;">状态</th>
+                  </tr>
+                </thead>
+                <tbody id="video-table-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- STEP 2: 下载参数 -->
+          <div class="form-section">
+            <h3 class="section-title">STEP 2: 下载参数设置</h3>
+            <div class="param-row" style="flex-wrap: wrap; gap: 12px;">
+              <!-- 格式选择 -->
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <label>格式:</label>
+                <select id="video-format" class="select" style="width: 100px;" onchange="updateFormatOptions()">
+                  <option value="mp4">mp4</option>
+                  <option value="mkv">mkv</option>
+                  <option value="webm">webm</option>
+                </select>
+              </div>
+
+              <!-- 画质选择 -->
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <label>画质:</label>
+                <select id="video-quality" class="select" style="width: 120px;">
+                  <option value="best">Best</option>
+                  <option value="2160p">4K (2160p)</option>
+                  <option value="1440p">2K (1440p)</option>
+                  <option value="1080p">1080p</option>
+                  <option value="720p">720p</option>
+                  <option value="480p">480p</option>
+                </select>
+              </div>
+
+              <!-- 仅下载音频 -->
+              <label class="checkbox-label">
+                <input type="checkbox" id="audio-only" onchange="toggleAudioOnly()">
+                <span>仅下载音频</span>
+              </label>
+
+              <!-- 下载字幕 -->
+              <label class="checkbox-label">
+                <input type="checkbox" id="download-subtitle">
+                <span>下载字幕</span>
+              </label>
+              <select id="subtitle-lang" class="select" style="width: 100px;">
+                <option value="en">en</option>
+                <option value="zh-Hans">zh-Hans</option>
+                <option value="zh-Hant">zh-Hant</option>
+                <option value="ja">ja</option>
+                <option value="ko">ko</option>
+                <option value="auto">auto</option>
+              </select>
+
+              <!-- 线程数 -->
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <label>线程数:</label>
+                <input type="number" id="download-threads" class="input input-small" value="4" min="1" max="8"
+                  style="width: 60px;">
+              </div>
+            </div>
+
+            <!-- 下载目录 -->
+            <div class="param-row" style="margin-top: 12px;">
+              <label>保存至:</label>
+              <input type="text" id="download-dir" class="input file-path" placeholder="默认: ~/Downloads"
+                style="flex: 1;">
+              <button class="btn btn-secondary" onclick="selectDownloadDir()">浏览...</button>
+            </div>
+          </div>
+
+          <!-- STEP 3: 状态与控制 -->
+          <div class="form-section status-section">
+            <h3 class="section-title">STEP 3: 状态与控制</h3>
+            <div class="param-row" style="align-items: center;">
+              <span id="download-status" class="status-text" style="flex: 1;">等待开始...</span>
+              <button id="btn-download" class="btn btn-primary" onclick="toggleVideoDownload()"
+                style="min-width: 120px;">
+                ⬇️ 开始下载
+              </button>
+            </div>
+            <div style="margin-top: 12px;">
+              <label style="font-size: 13px; color: var(--text-secondary);">总进度:</label>
+              <div id="download-progress" class="progress-bar" style="margin-top: 4px;">
+                <div id="download-progress-inner" class="progress-bar-inner" style="width: 0%;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================== 设置面板 ==================== -->
+      <section id="settings-panel" class="panel">
+        <div class="panel-content">
+          <div class="form-section">
+            <h3 class="section-title">Gladia API Keys</h3>
+            <p class="hint">用于音频转录，每行一个 API Key</p>
+            <textarea id="gladia-keys" class="textarea" rows="6" placeholder="输入 Gladia API Keys..."></textarea>
+            <button class="btn btn-primary" onclick="saveGladiaKeys()" style="margin-top: 12px;">保存 Gladia Keys</button>
+          </div>
+
+          <div class="form-section">
+            <h3 class="section-title">翻译文本替换规则</h3>
+            <p class="hint">格式: (原文:替换)，例如: (Hello:你好)(World:世界)</p>
+            <div class="param-row">
+              <label>语言:</label>
+              <select id="replace-language" class="select" style="width: 150px;">
+                <option value="英语">英语</option>
+                <option value="中文">中文</option>
+                <option value="日语">日语</option>
+              </select>
+            </div>
+            <textarea id="replace-rules" class="textarea" rows="4" placeholder="(Hello:你好)(World:世界)"></textarea>
+            <button class="btn btn-primary" onclick="saveReplaceRules()" style="margin-top: 12px;">保存替换规则</button>
+          </div>
+
+          <div class="form-section">
+            <h3 class="section-title">关于</h3>
+            <div class="about-info">
+              <p><strong>pyMediaTools Unified</strong> v2.0.0</p>
+              <p>统一媒体工具包 - 整合字幕对齐、媒体转换、TTS等功能</p>
+              <p style="margin-top: 8px; color: var(--text-secondary);">
+                技术栈: Electron + Vite + Python Flask
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+  <script src="voiceover-workflow.js"></script>
+</body>
+
+</html>

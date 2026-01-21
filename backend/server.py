@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 pyMediaTools Python 后端服务
 提供 REST API 供 Electron 前端调用
@@ -11,6 +12,15 @@ import tempfile
 import threading
 import re
 import subprocess
+
+# Windows 控制台 UTF-8 编码支持
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+    # 设置环境变量
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+
 from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 

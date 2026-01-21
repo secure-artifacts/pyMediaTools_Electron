@@ -81,7 +81,51 @@ document.addEventListener('DOMContentLoaded', () => {
     loadWatermarkSettings();  // 加载保存的水印设置
     checkBackendHealth();
     addToastStyles();
+
+    // 启动心跳检测（每30秒检查一次后端状态）
+    startHeartbeat();
 });
+
+// 心跳检测，保持后端活跃
+let heartbeatInterval = null;
+let lastHeartbeatSuccess = true;
+
+function startHeartbeat() {
+    // 每30秒发送一次心跳
+    heartbeatInterval = setInterval(async () => {
+        if (!backendReady) return; // 如果还没连上，不发心跳
+
+        try {
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+            const response = await fetch(`${API_BASE}/health`, {
+                signal: controller.signal
+            });
+            clearTimeout(timeoutId);
+
+            if (response.ok) {
+                if (!lastHeartbeatSuccess) {
+                    // 之前断开了，现在恢复了
+                    updateStatus('后端服务已恢复连接', 'success');
+                    showToast('后端服务已恢复', 'success');
+                    lastHeartbeatSuccess = true;
+                }
+            } else {
+                throw new Error('后端响应异常');
+            }
+        } catch (error) {
+            if (lastHeartbeatSuccess) {
+                // 之前正常，现在断开了
+                updateStatus('后端服务连接断开，尝试重连...', 'error');
+                lastHeartbeatSuccess = false;
+                // 重新开始健康检查（会尝试重连）
+                healthCheckRetries = 0;
+                checkBackendHealth();
+            }
+        }
+    }, 30000); // 30秒
+}
 
 // 添加 Toast 样式
 function addToastStyles() {

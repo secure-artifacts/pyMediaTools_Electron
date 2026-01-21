@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, powerSaveBlocker } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -6,6 +6,7 @@ const fs = require('fs');
 let mainWindow;
 let pythonProcess;
 let appIsReady = false;
+let powerSaveId = null; // 防止系统休眠
 
 // 获取资源路径 - 打包后在 resources 目录，开发时在项目根目录
 function getResourcePath(relativePath) {
@@ -222,6 +223,13 @@ ipcMain.handle('select-directory', async () => {
 
 app.whenReady().then(() => {
     appIsReady = true;
+
+    // 防止 macOS App Nap 让后端进程休眠
+    if (process.platform === 'darwin') {
+        powerSaveId = powerSaveBlocker.start('prevent-app-suspension');
+        console.log('PowerSaveBlocker started:', powerSaveId);
+    }
+
     startPythonBackend();
     setTimeout(() => createWindow(), 2000);
 });

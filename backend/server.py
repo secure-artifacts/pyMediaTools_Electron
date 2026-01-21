@@ -1658,14 +1658,18 @@ def elevenlabs_tts_workflow():
         
         # 提取前15个单词作为文件名前缀
         import re
-        # 移除 SSML 标签
+        # 移除 SSML 标签 <...> 和方括号标签 [...]
         clean_text = re.sub(r'<[^>]+>', '', text)
+        clean_text = re.sub(r'\[[^\]]+\]', '', clean_text)  # 移除 [reverent] 等标签
         # 提取前15个单词
         words = clean_text.split()[:15]
         text_prefix = '_'.join(words)[:60]  # 限制长度
-        # 清理文件名中的非法字符
-        text_prefix = ''.join(c for c in text_prefix if c.isalnum() or c in ' _-').strip()
+        # 只保留 ASCII 字母数字和下划线（避免编码问题）
+        text_prefix = ''.join(c for c in text_prefix if c.isascii() and (c.isalnum() or c in ' _-')).strip()
         text_prefix = text_prefix.replace(' ', '_')
+        # 如果清理后为空，使用默认前缀
+        if not text_prefix:
+            text_prefix = 'audio'
         
         # 任务编号前缀：01-文案前缀
         task_prefix = f"{task_index + 1:02d}-{text_prefix}"

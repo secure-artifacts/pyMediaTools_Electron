@@ -80,7 +80,7 @@ function getEnv() {
 }
 
 // 启动 Python 后端
-function startPythonBackend() {
+async function startPythonBackend() {
     const pythonPath = getPythonPath();
     const scriptPath = getResourcePath('backend/server.py');
     const env = getEnv();
@@ -107,6 +107,9 @@ function startPythonBackend() {
         return;
     }
 
+    // 先清理可能残留的旧进程
+    await killExistingBackend();
+
     try {
         pythonProcess = spawn(pythonPath, [scriptPath], {
             stdio: ['pipe', 'pipe', 'pipe'],
@@ -128,8 +131,15 @@ function startPythonBackend() {
 
         pythonProcess.on('close', (code) => {
             console.log(`Python exited with code ${code}`);
-            if (code !== 0) {
-                console.error('Python backend failed to start. Check logs above for details.');
+            if (code !== 0 && code !== null) {
+                console.error('Python backend crashed, attempting restart in 2 seconds...');
+                // 如果不是正常退出，2秒后尝试重启
+                setTimeout(() => {
+                    if (appIsReady && !isQuitting) {
+                        console.log('Restarting Python backend...');
+                        startPythonBackend();
+                    }
+                }, 2000);
             }
         });
 
@@ -137,6 +147,32 @@ function startPythonBackend() {
         console.error('Spawn error:', err);
     }
 }
+
+// 杀死可能残留的旧后端进程
+async function killExistingBackend() {
+    return new Promise((resolve) => {
+        const port = 5001;
+        let killCmd;
+
+        if (process.platform === 'win32') {
+            // Windows: 查找并杀死占用端口的进程
+            killCmd = `for /f "tokens=5" %a in ('netstat -aon ^| findstr :${port} ^| findstr LISTENING') do taskkill /F /PID %a`;
+        } else {
+            // macOS / Linux
+            killCmd = `lsof -ti :${port} | xargs kill -9 2>/dev/null || true`;
+        }
+
+        const { exec } = require('child_process');
+        exec(killCmd, (error, stdout, stderr) => {
+            if (stdout) console.log('Killed existing process on port 5001:', stdout);
+            if (stderr && !stderr.includes('No such process')) console.log('Kill stderr:', stderr);
+            // 等待端口释放
+            setTimeout(resolve, 500);
+        });
+    });
+}
+
+let isQuitting = false;
 
 function createWindow() {
     if (mainWindow) {
@@ -191,7 +227,8 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
-    if (pythonProcess) pythonProcess.kill();
+    isQuitting = true;
+    killPythonProcess();
     if (process.platform !== 'darwin') app.quit();
 });
 
@@ -202,5 +239,25 @@ app.on('activate', () => {
 });
 
 app.on('before-quit', () => {
-    if (pythonProcess) pythonProcess.kill();
+    isQuitting = true;
+    killPythonProcess();
 });
+
+// 强制终止 Python 进程
+function killPythonProcess() {
+    if (pythonProcess) {
+        try {
+            // 先尝试正常终止
+            pythonProcess.kill('SIGTERM');
+            // 1秒后强制终止
+            setTimeout(() => {
+                if (pythonProcess && !pythonProcess.killed) {
+                    pythonProcess.kill('SIGKILL');
+                }
+            }, 1000);
+        } catch (e) {
+            console.error('Error killing Python process:', e);
+        }
+        pythonProcess = null;
+    }
+}

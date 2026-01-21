@@ -1609,20 +1609,41 @@ function adjustWatermarkOffset(dx, dy) {
 }
 
 // 检查后端健康状态
+let healthCheckRetries = 0;
+const MAX_HEALTH_RETRIES = 20; // 最多重试20次（约60秒）
+
 async function checkBackendHealth() {
     try {
-        const response = await fetch(`${API_BASE}/health`);
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+        const response = await fetch(`${API_BASE}/health`, {
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+
         if (response.ok) {
             updateStatus('后端服务已连接', 'success');
             backendReady = true;
+            healthCheckRetries = 0;
             if (!settingsAutoLoaded) {
                 settingsAutoLoaded = true;
                 loadSettings(true);
             }
         }
     } catch (error) {
-        updateStatus('等待后端服务启动...', 'error');
-        setTimeout(checkBackendHealth, 3000);
+        healthCheckRetries++;
+
+        if (healthCheckRetries >= MAX_HEALTH_RETRIES) {
+            updateStatus(`后端服务无法连接 (已重试${healthCheckRetries}次)，请检查 Python 环境`, 'error');
+            console.error('后端启动失败，可能原因：1.Python未安装 2.依赖包缺失 3.端口5001被占用');
+            // 显示更详细的提示
+            showToast('后端服务无法启动，请检查 Python 是否已安装', 'error', 10000);
+        } else {
+            const remaining = MAX_HEALTH_RETRIES - healthCheckRetries;
+            updateStatus(`等待后端服务启动... (${healthCheckRetries}/${MAX_HEALTH_RETRIES})`, 'error');
+            setTimeout(checkBackendHealth, 3000);
+        }
     }
 }
 

@@ -1629,6 +1629,8 @@ def elevenlabs_tts_workflow():
     max_duration = float(data.get('max_duration', 29.0))
     subtitle_text = data.get('subtitle_text', '')
     export_mp4 = data.get('export_mp4', False)
+    export_fcpxml = data.get('export_fcpxml', True)  # 默认导出 FCPXML
+    seamless_fcpxml = data.get('seamless_fcpxml', True)  # 默认无缝字幕
     
     if not text or not voice_id:
         return jsonify({"error": "缺少必要参数"}), 400
@@ -1815,7 +1817,7 @@ def elevenlabs_tts_workflow():
                         generation_subtitle_array, generation_subtitle_text,
                         source_text_with_info, {},  # 无翻译文本
                         False, False,  # gen_merge_srt, source_up_order
-                        False, False   # export_fcpxml, seamless_fcpxml
+                        export_fcpxml, seamless_fcpxml  # 导出 FCPXML（默认启用）
                     )
                     
                     # 查找生成的 SRT 文件

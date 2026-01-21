@@ -348,6 +348,7 @@ async function startVoiceoverWorkflow() {
             updateVWProgress(current, total, `[${i + 1}/${vwTasks.length}] 生成音频...`);
 
             try {
+                const exportFcpxml = document.getElementById('vw-export-fcpxml')?.checked ?? true;
                 const ttsResponse = await fetch(`${API_BASE}/elevenlabs/tts-workflow`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -360,6 +361,8 @@ async function startVoiceoverWorkflow() {
                         max_duration: maxDuration,
                         subtitle_text: task.subtitleText,
                         export_mp4: task.exportMp4,  // 从任务读取
+                        export_fcpxml: exportFcpxml,  // 导出达芬奇字幕
+                        seamless_fcpxml: true,  // 默认无缝字幕
                         output_dir: outputDir
                     })
                 });

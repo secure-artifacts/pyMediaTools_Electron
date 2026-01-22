@@ -50,25 +50,34 @@ jobs:
           node-version: '20'
           cache: 'npm'
       
-      - name: 🐍 设置 Python (用于后端依赖验证)
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      
-      - name: 🔧 安装 Python 依赖
+      - name: 🐍 下载 Python Standalone (ARM64)
         run: |
-          pip install flask flask-cors pydub requests pysrt diff-match-patch
+          echo "📥 下载 Python Standalone for macOS ARM64..."
+          mkdir -p vendor/darwin
+          curl -L -o /tmp/python-standalone.tar.gz \
+            "https://github.com/indygreg/python-build-standalone/releases/download/20241016/cpython-3.11.10+20241016-aarch64-apple-darwin-install_only.tar.gz"
+          
+          echo "📦 解压 Python..."
+          cd vendor/darwin
+          tar -xzf /tmp/python-standalone.tar.gz
+          rm /tmp/python-standalone.tar.gz
+          
+          echo "✅ Python 解压完成"
+          ls -la python/bin/
       
-      - name: 📥 下载 FFmpeg (macOS)
+      - name: 🔧 安装 Python 依赖到打包目录
         run: |
-          mkdir -p vendor/darwin/ffmpeg/bin
-          # 使用 Homebrew 安装的 ffmpeg 路径
-          brew install ffmpeg
-          cp $(which ffmpeg) vendor/darwin/ffmpeg/bin/
-          cp $(which ffprobe) vendor/darwin/ffmpeg/bin/
-          chmod +x vendor/darwin/ffmpeg/bin/*
-          echo "✅ FFmpeg 已安装到 vendor/darwin/ffmpeg/bin/"
-          ls -la vendor/darwin/ffmpeg/bin/
+          echo "🔧 安装 Python 后端依赖..."
+          ./vendor/darwin/python/bin/python3 -m pip install --upgrade pip
+          ./vendor/darwin/python/bin/python3 -m pip install \
+            flask flask-cors pydub requests pysrt diff-match-patch yt-dlp
+          
+          echo "🔍 验证安装:"
+          ./vendor/darwin/python/bin/python3 -c "import flask; from flask_cors import CORS; print('Flask version:', flask.__version__)"
+          ./vendor/darwin/python/bin/python3 -c "import diff_match_patch; print('diff-match-patch OK')"
+          ./vendor/darwin/python/bin/python3 -c "import pysrt; print('pysrt OK')"
+          
+          echo "✅ Python 依赖安装完成"
       
       - name: 🔧 安装 Node 依赖
         run: npm ci

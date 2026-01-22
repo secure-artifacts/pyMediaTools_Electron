@@ -16,7 +16,7 @@
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:build": "npm run build && electron-builder",
     "backend:start": "python3 backend/server.py",
-    "start": "concurrently \"npm run backend:start\" \"npm run electron:dev\"",
+    "start": "npm run electron:dev",
     "pack:mac-arm64": "npm run build && electron-builder --mac --arm64",
     "pack:mac-x64": "npm run build && electron-builder --mac --x64",
     "pack:mac-universal": "npm run build && electron-builder --mac --arm64 --x64",

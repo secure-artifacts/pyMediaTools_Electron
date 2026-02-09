@@ -5141,3 +5141,1180 @@ function applySmartSplitPoints() {
         showToast(`已应用 ${smartSplitSegments.length} 个分割片段`, 'success');
     }
 }
+
+// ==================== 场景检测模块（批量） ====================
+
+let sceneFiles = [];         // [{path, name}]
+let sceneResults = {};       // { filePath: { data, segments } }
+let sceneOutputDir = '';
+
+// 初始化场景检测
+document.addEventListener('DOMContentLoaded', () => {
+    const sceneInput = document.getElementById('scene-video-input');
+    if (sceneInput) {
+        sceneInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                const newFiles = Array.from(e.target.files).map(f => ({
+                    path: f.path || f.name,
+                    name: f.name
+                }));
+                // 合并去重
+                newFiles.forEach(nf => {
+                    if (!sceneFiles.find(sf => sf.path === nf.path)) {
+                        sceneFiles.push(nf);
+                    }
+                });
+                updateSceneFileDisplay();
+                renderSceneFileCards();
+                showToast(`已添加 ${newFiles.length} 个文件，共 ${sceneFiles.length} 个`, 'success');
+            }
+        });
+    }
+
+    // 拖拽支持
+    const dropZone = document.getElementById('scene-drop-zone');
+    if (dropZone) {
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = 'var(--accent)';
+            dropZone.style.background = 'rgba(102, 126, 234, 0.05)';
+        });
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.style.borderColor = 'var(--border-color)';
+            dropZone.style.background = '';
+        });
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.style.borderColor = 'var(--border-color)';
+            dropZone.style.background = '';
+            const videoExts = ['.mp4', '.mov', '.mkv', '.avi', '.wmv', '.flv', '.webm', '.m4v'];
+            const files = Array.from(e.dataTransfer.files).filter(f =>
+                videoExts.some(ext => f.name.toLowerCase().endsWith(ext))
+            );
+            if (files.length > 0) {
+                files.forEach(f => {
+                    const info = { path: f.path || f.name, name: f.name };
+                    if (!sceneFiles.find(sf => sf.path === info.path)) {
+                        sceneFiles.push(info);
+                    }
+                });
+                updateSceneFileDisplay();
+                renderSceneFileCards();
+                showToast(`已添加 ${files.length} 个文件`, 'success');
+            }
+        });
+    }
+});
+
+function updateSceneFileDisplay() {
+    const pathEl = document.getElementById('scene-video-path');
+    if (sceneFiles.length === 0) {
+        pathEl.value = '';
+    } else if (sceneFiles.length === 1) {
+        pathEl.value = sceneFiles[0].name;
+    } else {
+        pathEl.value = `${sceneFiles.length} 个视频文件`;
+    }
+}
+
+function clearSceneFiles() {
+    sceneFiles = [];
+    sceneResults = {};
+    sceneOutputDir = '';
+    updateSceneFileDisplay();
+    renderSceneFileCards();
+    document.getElementById('scene-export-status').classList.add('hidden');
+    document.getElementById('scene-export-all-btn').style.display = 'none';
+    document.getElementById('scene-detect-status').textContent = '就绪';
+    document.getElementById('scene-detect-status').style.color = '';
+}
+
+function renderSceneFileCards() {
+    const container = document.getElementById('scene-file-cards');
+    container.innerHTML = '';
+
+    if (sceneFiles.length === 0) {
+        container.innerHTML = '<p class="hint">请先选择视频文件。</p>';
+        return;
+    }
+
+    sceneFiles.forEach((file, idx) => {
+        const result = sceneResults[file.path];
+        const card = document.createElement('div');
+        card.className = 'scene-file-card';
+        card.dataset.idx = idx;
+        card.style.cssText = 'background: var(--bg-tertiary); border-radius: 8px; padding: 12px; border: 1px solid rgba(255,255,255,0.05);';
+
+        // ---- 卡片头部 ----
+        const header = document.createElement('div');
+        header.style.cssText = 'display: flex; align-items: center; gap: 8px;';
+
+        // 文件名
+        const nameEl = document.createElement('div');
+        nameEl.style.cssText = 'flex: 1; font-size: 13px; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+        nameEl.textContent = `🎬 ${file.name}`;
+        nameEl.title = file.path;
+
+        // 状态标签
+        const statusTag = document.createElement('span');
+        statusTag.id = `scene-status-${idx}`;
+        statusTag.style.cssText = 'font-size: 11px; padding: 2px 8px; border-radius: 3px;';
+        if (result) {
+            statusTag.textContent = `✅ ${result.scene_points.length} 个切换点`;
+            statusTag.style.background = 'rgba(0, 217, 165, 0.15)';
+            statusTag.style.color = '#00d9a5';
+        } else {
+            statusTag.textContent = '待检测';
+            statusTag.style.background = 'rgba(128,128,128,0.2)';
+            statusTag.style.color = 'var(--text-muted)';
+        }
+
+        // 单个文件检测按钮
+        const detectBtn = document.createElement('button');
+        detectBtn.className = 'btn btn-secondary';
+        detectBtn.style.cssText = 'padding: 4px 10px; font-size: 11px;';
+        detectBtn.textContent = result ? '🔄 重新检测' : '🔍 检测';
+        detectBtn.onclick = () => detectSingleFile(idx);
+
+        // 导出按钮（检测完成后显示）
+        const exportBtn = document.createElement('button');
+        exportBtn.className = 'btn btn-primary';
+        exportBtn.style.cssText = 'padding: 4px 10px; font-size: 11px;';
+        exportBtn.textContent = '📦 导出';
+        exportBtn.style.display = result ? '' : 'none';
+        exportBtn.id = `scene-export-btn-${idx}`;
+        exportBtn.onclick = () => exportSingleFile(idx);
+
+        // 裁切按钮
+        const trimBtn = document.createElement('button');
+        trimBtn.className = 'btn btn-secondary';
+        trimBtn.style.cssText = 'padding: 4px 10px; font-size: 11px;';
+        trimBtn.textContent = '✂️ 裁切';
+        trimBtn.title = '打开手动裁切工具';
+        trimBtn.onclick = () => openTrimModal(file.path, file.name);
+
+        // 删除按钮
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'btn btn-secondary';
+        removeBtn.style.cssText = 'padding: 4px 8px; font-size: 11px; color: var(--error);';
+        removeBtn.textContent = '✕';
+        removeBtn.title = '移除此文件';
+        removeBtn.onclick = () => {
+            delete sceneResults[sceneFiles[idx].path];
+            sceneFiles.splice(idx, 1);
+            updateSceneFileDisplay();
+            renderSceneFileCards();
+            updateSceneExportAllBtn();
+        };
+
+        header.appendChild(nameEl);
+        header.appendChild(statusTag);
+        header.appendChild(detectBtn);
+        header.appendChild(exportBtn);
+        header.appendChild(trimBtn);
+        header.appendChild(removeBtn);
+        card.appendChild(header);
+
+        // ---- 视频信息 + 片段列表（检测完成后展示）----
+        if (result) {
+            // 视频信息
+            const infoRow = document.createElement('div');
+            infoRow.style.cssText = 'display: flex; gap: 12px; font-size: 11px; color: var(--text-muted); margin-top: 8px; padding: 6px 8px; background: rgba(255,255,255,0.03); border-radius: 4px;';
+            infoRow.innerHTML = `
+                <span>📐 ${result.resolution || '-'}</span>
+                <span>🖼️ ${result.fps} FPS</span>
+                <span>⏱️ ${formatTimeAudio(result.duration)}</span>
+                <span>✂️ ${result.segments.length} 片段</span>
+            `;
+            card.appendChild(infoRow);
+
+            // 展开/收起按钮
+            const toggleBtn = document.createElement('button');
+            toggleBtn.className = 'btn btn-secondary';
+            toggleBtn.style.cssText = 'padding: 2px 10px; font-size: 11px; margin-top: 8px; width: 100%;';
+            toggleBtn.textContent = '▼ 展开片段列表';
+            const segListContainer = document.createElement('div');
+            segListContainer.style.cssText = 'display: none; margin-top: 8px; max-height: 300px; overflow-y: auto;';
+            toggleBtn.onclick = () => {
+                const hidden = segListContainer.style.display === 'none';
+                segListContainer.style.display = hidden ? 'flex' : 'none';
+                segListContainer.style.flexDirection = 'column';
+                segListContainer.style.gap = '4px';
+                toggleBtn.textContent = hidden ? '▲ 收起片段列表' : '▼ 展开片段列表';
+            };
+            card.appendChild(toggleBtn);
+
+            // 片段列表
+            const maxDur = Math.max(...result.segments.map(s => s.duration));
+            result.segments.forEach((seg, sIdx) => {
+                const row = document.createElement('div');
+                row.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 5px 8px; background: var(--bg-secondary); border-radius: 4px; font-size: 12px;';
+
+                const cb = document.createElement('input');
+                cb.type = 'checkbox';
+                cb.checked = true;
+                cb.className = `scene-cb-${idx}`;
+                cb.dataset.segIndex = sIdx;
+
+                const num = document.createElement('span');
+                num.style.cssText = 'min-width: 28px; font-weight: 600; color: var(--accent);';
+                num.textContent = `#${seg.index}`;
+
+                const time = document.createElement('span');
+                time.style.cssText = 'flex: 1; font-family: monospace; color: var(--text-primary);';
+                time.textContent = `${seg.start_str} → ${seg.end_str}`;
+
+                const barC = document.createElement('div');
+                barC.style.cssText = 'width: 60px; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; overflow: hidden;';
+                const bar = document.createElement('div');
+                bar.style.cssText = `width: ${Math.max(2, (seg.duration / maxDur) * 100)}%; height: 100%; background: linear-gradient(90deg, #667eea, #764ba2); border-radius: 2px;`;
+                barC.appendChild(bar);
+
+                const dur = document.createElement('span');
+                dur.style.cssText = 'min-width: 55px; color: var(--text-muted); text-align: right;';
+                dur.textContent = seg.duration_str;
+
+                row.appendChild(cb);
+                row.appendChild(num);
+                row.appendChild(time);
+                row.appendChild(barC);
+                row.appendChild(dur);
+                segListContainer.appendChild(row);
+            });
+
+            card.appendChild(segListContainer);
+        }
+
+        container.appendChild(card);
+    });
+}
+
+// 检测单个文件
+async function detectSingleFile(idx) {
+    const file = sceneFiles[idx];
+    if (!file) return;
+
+    const statusTag = document.getElementById(`scene-status-${idx}`);
+    if (statusTag) {
+        statusTag.textContent = '⏳ 分析中...';
+        statusTag.style.background = 'rgba(102, 126, 234, 0.15)';
+        statusTag.style.color = 'var(--accent)';
+    }
+
+    const threshold = parseFloat(document.getElementById('scene-threshold').value);
+    const minInterval = parseFloat(document.getElementById('scene-min-interval').value);
+
+    try {
+        const response = await fetch(`${API_BASE}/media/scene-detect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                file_path: file.path,
+                threshold: threshold,
+                min_interval: minInterval
+            })
+        });
+
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '检测失败');
+
+        sceneResults[file.path] = data;
+        renderSceneFileCards();
+        updateSceneExportAllBtn();
+        showToast(`${file.name}: ${data.message}`, 'success');
+
+    } catch (error) {
+        if (statusTag) {
+            statusTag.textContent = `❌ ${error.message}`;
+            statusTag.style.background = 'rgba(255, 71, 87, 0.15)';
+            statusTag.style.color = '#ff4757';
+        }
+        showToast(`${file.name}: ${error.message}`, 'error');
+    }
+}
+
+// 批量检测全部
+async function startSceneDetectAll() {
+    if (sceneFiles.length === 0) {
+        showToast('请先选择视频文件', 'error');
+        return;
+    }
+
+    const btn = document.getElementById('scene-detect-btn');
+    const statusEl = document.getElementById('scene-detect-status');
+
+    btn.disabled = true;
+    btn.textContent = '⏳ 批量分析中...';
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < sceneFiles.length; i++) {
+        statusEl.textContent = `正在分析 (${i + 1}/${sceneFiles.length}): ${sceneFiles[i].name}`;
+        statusEl.style.color = 'var(--accent)';
+        await detectSingleFile(i);
+
+        if (sceneResults[sceneFiles[i].path]) {
+            successCount++;
+        } else {
+            failCount++;
+        }
+    }
+
+    btn.disabled = false;
+    btn.textContent = '🔍 批量场景检测';
+    const msg = `批量检测完成: ${successCount} 成功${failCount > 0 ? `, ${failCount} 失败` : ''}`;
+    statusEl.textContent = msg;
+    statusEl.style.color = failCount > 0 ? 'var(--warning)' : 'var(--success)';
+    showToast(msg, successCount > 0 ? 'success' : 'error');
+}
+
+// 导出单个文件的选中片段
+async function exportSingleFile(idx) {
+    const file = sceneFiles[idx];
+    const result = sceneResults[file.path];
+    if (!result) return;
+
+    // 收集选中的片段
+    const checkboxes = document.querySelectorAll(`.scene-cb-${idx}`);
+    const selectedSegments = [];
+    checkboxes.forEach(cb => {
+        const sIdx = parseInt(cb.dataset.segIndex);
+        if (cb.checked && result.segments[sIdx]) {
+            selectedSegments.push(result.segments[sIdx]);
+        }
+    });
+
+    // 如果没有勾选（列表未展开），默认导出全部
+    if (selectedSegments.length === 0 && checkboxes.length === 0) {
+        selectedSegments.push(...result.segments);
+    }
+
+    if (selectedSegments.length === 0) {
+        showToast('请至少选择一个片段', 'error');
+        return;
+    }
+
+    const outputDir = document.getElementById('media-output-path').value || '';
+    const statusEl = document.getElementById('scene-export-text');
+    const exportSection = document.getElementById('scene-export-status');
+
+    exportSection.classList.remove('hidden');
+    statusEl.textContent = `正在导出 ${file.name} 的 ${selectedSegments.length} 个片段...`;
+
+    try {
+        const response = await fetch(`${API_BASE}/media/scene-split`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                file_path: file.path,
+                segments: selectedSegments,
+                output_dir: outputDir
+            })
+        });
+
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '导出失败');
+
+        sceneOutputDir = data.output_dir || '';
+        statusEl.textContent = data.message;
+        showToast(data.message, 'success');
+
+    } catch (error) {
+        statusEl.textContent = `导出失败: ${error.message}`;
+        showToast(`导出失败: ${error.message}`, 'error');
+    }
+}
+
+// 批量导出全部文件
+async function exportAllScenes() {
+    const filesToExport = sceneFiles.filter(f => sceneResults[f.path]);
+    if (filesToExport.length === 0) {
+        showToast('没有已检测的文件可导出', 'error');
+        return;
+    }
+
+    const outputDir = document.getElementById('media-output-path').value || '';
+    const statusEl = document.getElementById('scene-export-text');
+    const progressEl = document.getElementById('scene-export-progress');
+    const exportSection = document.getElementById('scene-export-status');
+
+    exportSection.classList.remove('hidden');
+    let totalExported = 0;
+
+    for (let i = 0; i < filesToExport.length; i++) {
+        const file = filesToExport[i];
+        const result = sceneResults[file.path];
+        statusEl.textContent = `正在导出 (${i + 1}/${filesToExport.length}): ${file.name}...`;
+        progressEl.querySelector('.progress-bar-inner').style.width = `${((i) / filesToExport.length) * 100}%`;
+
+        try {
+            const response = await fetch(`${API_BASE}/media/scene-split`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    file_path: file.path,
+                    segments: result.segments,
+                    output_dir: outputDir
+                })
+            });
+
+            const data = await response.json();
+            if (response.ok) {
+                totalExported += data.files?.length || 0;
+                sceneOutputDir = data.output_dir || sceneOutputDir;
+            }
+        } catch (error) {
+            console.error(`导出 ${file.name} 失败:`, error);
+        }
+    }
+
+    progressEl.querySelector('.progress-bar-inner').style.width = '100%';
+    statusEl.textContent = `批量导出完成: 共导出 ${totalExported} 个片段`;
+    showToast(`批量导出完成: ${totalExported} 个片段`, 'success');
+}
+
+function updateSceneExportAllBtn() {
+    const btn = document.getElementById('scene-export-all-btn');
+    const hasResults = sceneFiles.some(f => sceneResults[f.path]);
+    if (btn) btn.style.display = hasResults ? '' : 'none';
+}
+
+async function openSceneOutputDir() {
+    let dir = sceneOutputDir;
+    if (!dir && sceneFiles.length > 0) {
+        const p = sceneFiles[0].path;
+        dir = p.substring(0, Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\')));
+    }
+    if (!dir) {
+        showToast('没有输出目录', 'error');
+        return;
+    }
+
+    try {
+        await fetch(`${API_BASE}/open-folder`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: dir })
+        });
+    } catch (error) {
+        showToast('打开目录失败', 'error');
+    }
+}
+
+// ==================== 手动裁切弹窗模块 ====================
+
+let trimState = {
+    filePath: '',
+    fileName: '',
+    duration: 0,
+    inTime: 0,
+    outTime: 0,
+    peaks: [],
+    scenePoints: [],   // 场景切割点时间戳
+    isPlaying: false,
+    animFrameId: null,
+    dragging: null,  // 'in' | 'out' | null
+    // 缩放状态
+    zoom: 1,          // 1 = 全览，10 = 只看 1/10 时长
+    viewStart: 0,     // 可见时间窗口起点
+    viewEnd: 0        // 可见时间窗口终点
+};
+
+async function openTrimModal(filePath, fileName) {
+    trimState.filePath = filePath;
+    trimState.fileName = fileName;
+    trimState.inTime = 0;
+    trimState.outTime = 0;
+    trimState.isPlaying = false;
+    trimState.dragging = null;
+
+    // 从场景检测结果读取切割点
+    const fileResult = sceneResults[filePath];
+    if (fileResult && fileResult.scene_points) {
+        trimState.scenePoints = fileResult.scene_points.map(p => p.time || p);
+    } else {
+        trimState.scenePoints = [];
+    }
+
+    document.getElementById('trim-file-name').textContent = fileName;
+    document.getElementById('trim-export-status').textContent = '';
+
+    // 加载视频
+    const video = document.getElementById('trim-video-player');
+    const videoUrl = `${API_BASE}/file/proxy?path=${encodeURIComponent(filePath)}`;
+    video.src = videoUrl;
+    video.currentTime = 0;
+
+    video.onloadedmetadata = () => {
+        trimState.duration = video.duration;
+        trimState.outTime = video.duration;
+        trimState.zoom = 1;
+        trimState.viewStart = 0;
+        trimState.viewEnd = video.duration;
+        updateTrimUI();
+        updateTrimTimeRuler();
+    };
+
+    video.ontimeupdate = () => {
+        updateTrimPlayhead();
+        document.getElementById('trim-current-time').textContent = formatTrimTime(video.currentTime);
+    };
+
+    video.onended = () => {
+        trimState.isPlaying = false;
+        document.getElementById('trim-play-btn').textContent = '▶ 播放';
+    };
+
+    // 显示弹窗
+    document.getElementById('trim-modal').style.display = 'flex';
+
+    // 加载波形
+    loadTrimWaveform(filePath);
+
+    // 设置事件监听
+    setupTrimDragHandles();
+    setupTrimTimelineClick();
+    setupTrimZoom();
+}
+
+function closeTrimModal() {
+    const video = document.getElementById('trim-video-player');
+    video.pause();
+    video.src = '';
+    trimState.isPlaying = false;
+    if (trimState.animFrameId) {
+        cancelAnimationFrame(trimState.animFrameId);
+        trimState.animFrameId = null;
+    }
+    document.getElementById('trim-modal').style.display = 'none';
+}
+
+async function loadTrimWaveform(filePath) {
+    const canvas = document.getElementById('trim-waveform-canvas');
+    const ctx = canvas.getContext('2d');
+    const container = document.getElementById('trim-timeline-container');
+
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
+
+    // 显示加载中
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('⏳ 加载波形中...', canvas.width / 2, canvas.height / 2);
+
+    try {
+        const response = await fetch(`${API_BASE}/media/waveform`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_path: filePath, num_peaks: Math.min(600, container.clientWidth) })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error);
+
+        trimState.peaks = data.peaks || [];
+        if (data.duration && data.duration > 0) {
+            trimState.duration = data.duration;
+            trimState.outTime = data.duration;
+        }
+        trimState.viewEnd = trimState.duration;
+        drawTrimWaveform();
+        updateTrimUI();
+        updateTrimTimeRuler();
+    } catch (error) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = 'rgba(255,255,255,0.1)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#ff4757';
+        ctx.font = '12px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`波形加载失败: ${error.message}`, canvas.width / 2, canvas.height / 2);
+    }
+}
+
+// 将时间转换为可见区域内的百分比 (0-100)
+function timeToViewPct(t) {
+    const vd = trimState.viewEnd - trimState.viewStart;
+    if (vd <= 0) return 0;
+    return ((t - trimState.viewStart) / vd) * 100;
+}
+
+// 将可见区域内的百分比转换为时间
+function viewPctToTime(pct) {
+    const vd = trimState.viewEnd - trimState.viewStart;
+    return trimState.viewStart + (pct / 100) * vd;
+}
+
+function drawTrimWaveform() {
+    const canvas = document.getElementById('trim-waveform-canvas');
+    const ctx = canvas.getContext('2d');
+    const container = document.getElementById('trim-timeline-container');
+    canvas.width = container.clientWidth;
+    canvas.height = container.clientHeight;
+    const w = canvas.width;
+    const h = canvas.height;
+    const peaks = trimState.peaks;
+
+    ctx.clearRect(0, 0, w, h);
+
+    // 背景
+    ctx.fillStyle = 'rgba(30, 32, 40, 0.9)';
+    ctx.fillRect(0, 0, w, h);
+
+    if (!peaks.length || trimState.duration <= 0) return;
+
+    const vStart = trimState.viewStart;
+    const vEnd = trimState.viewEnd;
+    const vDur = vEnd - vStart;
+    const mid = h / 2;
+
+    // 根据可见时间窗口绘制波形
+    const totalPeaks = peaks.length;
+    const startIdx = Math.floor((vStart / trimState.duration) * totalPeaks);
+    const endIdx = Math.ceil((vEnd / trimState.duration) * totalPeaks);
+    const visiblePeaks = endIdx - startIdx;
+    const barWidth = w / Math.max(visiblePeaks, 1);
+
+    for (let i = startIdx; i < endIdx && i < totalPeaks; i++) {
+        const barH = peaks[i] * mid * 0.9;
+        const x = (i - startIdx) * barWidth;
+
+        const ratio = i / totalPeaks;
+        const r = Math.round(46 + ratio * 56);
+        const g = Math.round(213 - ratio * 138);
+        const b = Math.round(115 + ratio * 47);
+
+        ctx.fillStyle = `rgba(${r}, ${g}, ${b}, 0.8)`;
+        ctx.fillRect(x, mid - barH, Math.max(barWidth - 0.3, 1), barH * 2);
+    }
+
+    // 中线
+    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(0, mid);
+    ctx.lineTo(w, mid);
+    ctx.stroke();
+
+    // ====== 绘制场景切割点标记 ======
+    if (trimState.scenePoints.length > 0) {
+        ctx.save();
+        trimState.scenePoints.forEach((t, idx) => {
+            if (t < vStart || t > vEnd) return; // 只绘制可见范围内的
+            const x = ((t - vStart) / vDur) * w;
+
+            // 黄色竖线
+            ctx.strokeStyle = 'rgba(255, 215, 0, 0.9)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([4, 2]);
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, h);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // 顶部三角标记
+            ctx.fillStyle = '#ffd700';
+            ctx.beginPath();
+            ctx.moveTo(x - 5, 0);
+            ctx.lineTo(x + 5, 0);
+            ctx.lineTo(x, 10);
+            ctx.closePath();
+            ctx.fill();
+
+            // 切割点编号 + 时间
+            ctx.fillStyle = 'rgba(255, 215, 0, 0.95)';
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            const yPos = (idx % 2 === 0) ? 22 : h - 4;
+            ctx.fillText(`#${idx + 1} ${formatTrimTime(t)}`, x, yPos);
+        });
+        ctx.restore();
+    }
+
+    // ====== 缩放指示器 ======
+    if (trimState.zoom > 1.05) {
+        ctx.save();
+        ctx.fillStyle = 'rgba(255,255,255,0.6)';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(`🔍 ${trimState.zoom.toFixed(1)}x  [滚轮缩放 / 拖动平移 / 双击复位]`, w - 6, h - 6);
+        ctx.restore();
+    }
+}
+
+function updateTrimUI() {
+    const dur = trimState.duration;
+    if (dur <= 0) return;
+
+    // 使用可见窗口百分比计算 handle 位置
+    const inPct = timeToViewPct(trimState.inTime);
+    const outPct = timeToViewPct(trimState.outTime);
+
+    // IN/OUT handle 位置（限制在 0-100 范围内）
+    const clampIn = Math.max(-2, Math.min(102, inPct));
+    const clampOut = Math.max(-2, Math.min(102, outPct));
+    document.getElementById('trim-handle-in').style.left = `${clampIn}%`;
+    document.getElementById('trim-handle-out').style.left = `${clampOut}%`;
+
+    // 遮罩
+    document.getElementById('trim-mask-left').style.width = `${Math.max(0, clampIn)}%`;
+    document.getElementById('trim-mask-right').style.left = `${Math.min(100, clampOut)}%`;
+    document.getElementById('trim-mask-right').style.width = `${Math.max(0, 100 - clampOut)}%`;
+
+    // 时间输入框
+    document.getElementById('trim-in-time').value = formatTrimTime(trimState.inTime);
+    document.getElementById('trim-out-time').value = formatTrimTime(trimState.outTime);
+    document.getElementById('trim-total-time').textContent = formatTrimTime(dur);
+
+    // 选区时长
+    const selDur = trimState.outTime - trimState.inTime;
+    document.getElementById('trim-selection-duration').textContent = formatTrimTime(Math.max(0, selDur));
+}
+
+function updateTrimPlayhead() {
+    const video = document.getElementById('trim-video-player');
+    const dur = trimState.duration;
+    if (dur <= 0) return;
+    const pct = timeToViewPct(video.currentTime);
+    document.getElementById('trim-playhead').style.left = `${Math.max(-1, Math.min(101, pct))}%`;
+}
+
+function updateTrimTimeRuler() {
+    const ruler = document.getElementById('trim-time-ruler');
+    const vStart = trimState.viewStart;
+    const vEnd = trimState.viewEnd;
+    const vDur = vEnd - vStart;
+    const numMarks = 10;
+    ruler.innerHTML = '';
+    for (let i = 0; i <= numMarks; i++) {
+        const t = vStart + (vDur / numMarks) * i;
+        const span = document.createElement('span');
+        span.textContent = formatTrimTime(t);
+        ruler.appendChild(span);
+    }
+}
+
+function formatTrimTime(s) {
+    if (!s || s < 0) s = 0;
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m.toString().padStart(2, '0')}:${sec.toFixed(3).padStart(6, '0')}`;
+}
+
+function parseTrimTime(str) {
+    const parts = str.trim().split(':');
+    if (parts.length === 2) {
+        return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
+    } else if (parts.length === 3) {
+        return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
+    }
+    return parseFloat(str) || 0;
+}
+
+// ---- 播放控制 ----
+function toggleTrimPlay() {
+    const video = document.getElementById('trim-video-player');
+    if (video.paused) {
+        // 如果播放头超出OUT点，从IN点开始
+        if (video.currentTime >= trimState.outTime - 0.05) {
+            video.currentTime = trimState.inTime;
+        }
+        video.play();
+        trimState.isPlaying = true;
+        document.getElementById('trim-play-btn').textContent = '⏸ 暂停';
+        monitorTrimPlayback();
+    } else {
+        video.pause();
+        trimState.isPlaying = false;
+        document.getElementById('trim-play-btn').textContent = '▶ 播放';
+    }
+}
+
+function monitorTrimPlayback() {
+    const video = document.getElementById('trim-video-player');
+    if (!trimState.isPlaying) return;
+    // 到达OUT点自动暂停
+    if (video.currentTime >= trimState.outTime - 0.03) {
+        video.pause();
+        video.currentTime = trimState.outTime;
+        trimState.isPlaying = false;
+        document.getElementById('trim-play-btn').textContent = '▶ 播放';
+        return;
+    }
+    // 缩放时自动跟随播放头
+    if (trimState.zoom > 1.05) {
+        const ct = video.currentTime;
+        const viewDur = trimState.viewEnd - trimState.viewStart;
+        const margin = viewDur * 0.15;
+        if (ct > trimState.viewEnd - margin || ct < trimState.viewStart + margin) {
+            let newStart = ct - viewDur * 0.3;
+            newStart = Math.max(0, Math.min(trimState.duration - viewDur, newStart));
+            trimState.viewStart = newStart;
+            trimState.viewEnd = newStart + viewDur;
+            drawTrimWaveform();
+            updateTrimUI();
+            updateTrimTimeRuler();
+        }
+    }
+    requestAnimationFrame(monitorTrimPlayback);
+}
+
+function trimJumpToIn() {
+    document.getElementById('trim-video-player').currentTime = trimState.inTime;
+}
+
+function trimJumpToOut() {
+    document.getElementById('trim-video-player').currentTime = Math.max(0, trimState.outTime - 0.1);
+}
+
+function setTrimSpeed() {
+    const speed = parseFloat(document.getElementById('trim-speed').value);
+    document.getElementById('trim-video-player').playbackRate = speed;
+}
+
+function setTrimInAtCurrent() {
+    const t = document.getElementById('trim-video-player').currentTime;
+    trimState.inTime = Math.min(t, trimState.outTime - 0.1);
+    updateTrimUI();
+}
+
+function setTrimOutAtCurrent() {
+    const t = document.getElementById('trim-video-player').currentTime;
+    trimState.outTime = Math.max(t, trimState.inTime + 0.1);
+    updateTrimUI();
+}
+
+function onTrimTimeInputChange(which) {
+    if (which === 'in') {
+        const t = parseTrimTime(document.getElementById('trim-in-time').value);
+        trimState.inTime = Math.max(0, Math.min(t, trimState.outTime - 0.1));
+    } else {
+        const t = parseTrimTime(document.getElementById('trim-out-time').value);
+        trimState.outTime = Math.min(trimState.duration, Math.max(t, trimState.inTime + 0.1));
+    }
+    updateTrimUI();
+}
+
+// ---- IN/OUT 手柄 + 播放头拖动 ----
+function setupTrimDragHandles() {
+    const container = document.getElementById('trim-timeline-container');
+    const handleIn = document.getElementById('trim-handle-in');
+    const handleOut = document.getElementById('trim-handle-out');
+    const playhead = document.getElementById('trim-playhead');
+
+    const startDrag = (which) => (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        trimState.dragging = which;
+        document.addEventListener('mousemove', onDragMove);
+        document.addEventListener('mouseup', onDragEnd);
+    };
+
+    handleIn.addEventListener('mousedown', startDrag('in'));
+    handleOut.addEventListener('mousedown', startDrag('out'));
+    playhead.addEventListener('mousedown', startDrag('playhead'));
+
+    function onDragMove(e) {
+        if (!trimState.dragging) return;
+        const rect = container.getBoundingClientRect();
+        const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+        const t = viewPctToTime(pct * 100);
+
+        if (trimState.dragging === 'in') {
+            trimState.inTime = Math.max(0, Math.min(t, trimState.outTime - 0.1));
+        } else if (trimState.dragging === 'out') {
+            trimState.outTime = Math.min(trimState.duration, Math.max(t, trimState.inTime + 0.1));
+        } else if (trimState.dragging === 'playhead') {
+            // 拖动播放头 = 实时 scrub
+            document.getElementById('trim-video-player').currentTime = Math.max(0, Math.min(trimState.duration, t));
+            updateTrimPlayhead();
+            return;
+        }
+
+        updateTrimUI();
+        document.getElementById('trim-video-player').currentTime = t;
+    }
+
+    function onDragEnd() {
+        trimState.dragging = null;
+        document.removeEventListener('mousemove', onDragMove);
+        document.removeEventListener('mouseup', onDragEnd);
+    }
+}
+
+// ---- 时间轴点击跳转 ----
+function setupTrimTimelineClick() {
+    const container = document.getElementById('trim-timeline-container');
+    // 点击跳转（通过 mousedown/up 距离判断，避免和拖动平移冲突）
+    let clickStartX = 0;
+    let clickStartY = 0;
+    container.addEventListener('mousedown', (e) => {
+        if (e.target.closest('.trim-handle')) return;
+        clickStartX = e.clientX;
+        clickStartY = e.clientY;
+    });
+    container.addEventListener('mouseup', (e) => {
+        if (trimState.dragging) return;
+        if (trimState._panning) return; // 刚拖动完不触发click
+        if (e.target.closest('.trim-handle')) return;
+        const dx = Math.abs(e.clientX - clickStartX);
+        const dy = Math.abs(e.clientY - clickStartY);
+        if (dx > 4 || dy > 4) return; // 移动超过4px认为是拖动而不是点击
+        const rect = container.getBoundingClientRect();
+        const pct = (e.clientX - rect.left) / rect.width;
+        const t = viewPctToTime(pct * 100);
+        document.getElementById('trim-video-player').currentTime = t;
+    });
+}
+
+// ---- 导出裁切 ----
+async function executeTrim() {
+    const statusEl = document.getElementById('trim-export-status');
+    const inT = trimState.inTime;
+    const outT = trimState.outTime;
+    const precise = document.getElementById('trim-precise-mode')?.checked ?? true;
+
+    if (outT - inT < 0.1) {
+        showToast('选区时长太短', 'error');
+        return;
+    }
+
+    const modeText = precise ? '精确模式（重编码，可能较慢）' : '快速模式';
+    statusEl.textContent = `⏳ 正在裁切（${modeText}）...`;
+    statusEl.style.color = 'var(--accent)';
+
+    try {
+        const outputDir = document.getElementById('media-output-path')?.value || '';
+        const response = await fetch(`${API_BASE}/media/trim`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                file_path: trimState.filePath,
+                start: inT,
+                end: outT,
+                output_dir: outputDir,
+                precise: precise
+            })
+        });
+
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || '裁切失败');
+
+        statusEl.textContent = `✅ ${data.message} (${data.mode || ''})`;
+        statusEl.style.color = 'var(--success)';
+        showToast(data.message, 'success');
+    } catch (error) {
+        statusEl.textContent = `❌ ${error.message}`;
+        statusEl.style.color = 'var(--error)';
+        showToast(`裁切失败: ${error.message}`, 'error');
+    }
+}
+
+// ---- 预览选区：从IN播放到OUT自动停止 ----
+function previewTrimSelection() {
+    const video = document.getElementById('trim-video-player');
+    video.currentTime = trimState.inTime;
+    video.play();
+    trimState.isPlaying = true;
+    document.getElementById('trim-play-btn').textContent = '⏸ 暂停';
+    monitorTrimPlayback();
+}
+
+// ---- 逐帧步进 ----
+function trimStepFrame(direction) {
+    const video = document.getElementById('trim-video-player');
+    video.pause();
+    trimState.isPlaying = false;
+    document.getElementById('trim-play-btn').textContent = '▶ 播放';
+
+    // 估算帧时长（默认30fps）
+    // 如果有检测结果则使用实际fps
+    let fps = 30;
+    const fileResult = sceneResults[trimState.filePath];
+    if (fileResult && fileResult.fps) {
+        fps = fileResult.fps;
+    }
+    const frameDuration = 1 / fps;
+    video.currentTime = Math.max(0, Math.min(trimState.duration, video.currentTime + direction * frameDuration));
+}
+
+// ---- 波形缩放 + 拖动平移 ----
+function setupTrimZoom() {
+    const container = document.getElementById('trim-timeline-container');
+    trimState._panning = false;
+    trimState._panStartX = 0;
+    trimState._panStartViewStart = 0;
+
+    // 滚轮 = 缩放（以鼠标位置为中心）
+    container.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const rect = container.getBoundingClientRect();
+        const mousePct = (e.clientX - rect.left) / rect.width;
+        const mouseTime = viewPctToTime(mousePct * 100);
+
+        const factor = e.deltaY > 0 ? 0.85 : 1.2;
+        trimState.zoom = Math.max(1, Math.min(100, trimState.zoom * factor));
+
+        const newViewDur = trimState.duration / trimState.zoom;
+        let newStart = mouseTime - mousePct * newViewDur;
+        newStart = Math.max(0, Math.min(trimState.duration - newViewDur, newStart));
+        trimState.viewStart = newStart;
+        trimState.viewEnd = Math.min(trimState.duration, newStart + newViewDur);
+
+        drawTrimWaveform();
+        updateTrimUI();
+        updateTrimPlayhead();
+        updateTrimTimeRuler();
+    }, { passive: false });
+
+    // 拖动平移（缩放后拖动超过4px才开始平移，单击仍可定位）
+    container.addEventListener('mousedown', (e) => {
+        if (trimState.zoom <= 1.05) return;
+        if (e.target.closest('.trim-handle')) return;
+        if (trimState.dragging) return;
+
+        // 不立刻进入平移，先记录起点
+        trimState._panning = false;
+        trimState._panStartX = e.clientX;
+        trimState._panStartViewStart = trimState.viewStart;
+        let panActivated = false;
+
+        const onPanMove = (ev) => {
+            const dx = ev.clientX - trimState._panStartX;
+            // 移动超过4px才激活平移
+            if (!panActivated && Math.abs(dx) > 4) {
+                panActivated = true;
+                trimState._panning = true;
+                container.style.cursor = 'grabbing';
+            }
+            if (!panActivated) return;
+
+            const rect = container.getBoundingClientRect();
+            const viewDur = trimState.viewEnd - trimState.viewStart;
+            const timeDelta = -(dx / rect.width) * viewDur;
+            let newStart = trimState._panStartViewStart + timeDelta;
+            newStart = Math.max(0, Math.min(trimState.duration - viewDur, newStart));
+            trimState.viewStart = newStart;
+            trimState.viewEnd = newStart + viewDur;
+
+            drawTrimWaveform();
+            updateTrimUI();
+            updateTrimPlayhead();
+            updateTrimTimeRuler();
+        };
+
+        const onPanEnd = () => {
+            container.style.cursor = 'pointer';
+            if (panActivated) {
+                // 延迟重置平移标志，避免触发click
+                setTimeout(() => { trimState._panning = false; }, 50);
+            }
+            document.removeEventListener('mousemove', onPanMove);
+            document.removeEventListener('mouseup', onPanEnd);
+        };
+
+        document.addEventListener('mousemove', onPanMove);
+        document.addEventListener('mouseup', onPanEnd);
+    });
+
+    // 双击复位缩放
+    container.addEventListener('dblclick', (e) => {
+        if (e.target.closest('.trim-handle')) return;
+        trimState.zoom = 1;
+        trimState.viewStart = 0;
+        trimState.viewEnd = trimState.duration;
+        drawTrimWaveform();
+        updateTrimUI();
+        updateTrimPlayhead();
+        updateTrimTimeRuler();
+    });
+}
+
+function trimZoomIn() {
+    const center = (trimState.viewStart + trimState.viewEnd) / 2;
+    trimState.zoom = Math.min(100, trimState.zoom * 1.5);
+    const newViewDur = trimState.duration / trimState.zoom;
+    trimState.viewStart = Math.max(0, center - newViewDur / 2);
+    trimState.viewEnd = Math.min(trimState.duration, trimState.viewStart + newViewDur);
+    drawTrimWaveform();
+    updateTrimUI();
+    updateTrimPlayhead();
+    updateTrimTimeRuler();
+}
+
+function trimZoomOut() {
+    const center = (trimState.viewStart + trimState.viewEnd) / 2;
+    trimState.zoom = Math.max(1, trimState.zoom / 1.5);
+    const newViewDur = trimState.duration / trimState.zoom;
+    trimState.viewStart = Math.max(0, center - newViewDur / 2);
+    trimState.viewEnd = Math.min(trimState.duration, trimState.viewStart + newViewDur);
+    if (trimState.zoom <= 1.01) {
+        trimState.viewStart = 0;
+        trimState.viewEnd = trimState.duration;
+    }
+    drawTrimWaveform();
+    updateTrimUI();
+    updateTrimPlayhead();
+    updateTrimTimeRuler();
+}
+
+function trimZoomReset() {
+    trimState.zoom = 1;
+    trimState.viewStart = 0;
+    trimState.viewEnd = trimState.duration;
+    drawTrimWaveform();
+    updateTrimUI();
+    updateTrimPlayhead();
+    updateTrimTimeRuler();
+}
+
+// 缩放到当前播放头位置
+function trimZoomToPlayhead() {
+    const ct = document.getElementById('trim-video-player').currentTime;
+    trimState.zoom = Math.min(100, trimState.zoom * 2);
+    const newViewDur = trimState.duration / trimState.zoom;
+    trimState.viewStart = Math.max(0, ct - newViewDur / 2);
+    trimState.viewEnd = Math.min(trimState.duration, trimState.viewStart + newViewDur);
+    drawTrimWaveform();
+    updateTrimUI();
+    updateTrimPlayhead();
+    updateTrimTimeRuler();
+}
+
+// ESC 关闭裁切弹窗 + 快捷键
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && document.getElementById('trim-modal').style.display === 'flex') {
+        closeTrimModal();
+    }
+    if (document.getElementById('trim-modal').style.display === 'flex') {
+        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+        if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            trimStepFrame(-1);
+        } else if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            trimStepFrame(1);
+        } else if (e.key === ' ') {
+            e.preventDefault();
+            toggleTrimPlay();
+        } else if (e.key === 'i' || e.key === 'I') {
+            setTrimInAtCurrent();
+        } else if (e.key === 'o' || e.key === 'O') {
+            setTrimOutAtCurrent();
+        } else if (e.key === '=' || e.key === '+') {
+            e.preventDefault();
+            trimZoomIn();
+        } else if (e.key === '-') {
+            e.preventDefault();
+            trimZoomOut();
+        } else if (e.key === '0') {
+            e.preventDefault();
+            trimZoomReset();
+        }
+    }
+});
+

@@ -230,6 +230,8 @@ def proxy_local_file():
         '.flac': 'audio/flac',
         '.mp4': 'video/mp4',
         '.mov': 'video/quicktime',
+        '.mkv': 'video/x-matroska',
+        '.avi': 'video/x-msvideo',
         '.webm': 'video/webm'
     }
     mime_type = mime_types.get(ext, 'application/octet-stream')
@@ -782,7 +784,13 @@ def manage_elevenlabs_keys():
             if item.get('key') == new_key:
                 return jsonify({"error": "Key 已存在"}), 400
         
-        keys_data.append({"key": new_key, "enabled": True})
+        keys_data.append({
+            "key": new_key,
+            "enabled": True,
+            "manual_disabled": False,
+            "auto_disabled": False,
+            "auto_disabled_reason": ""
+        })
         file_data['keys_with_status'] = keys_data
         save_data(file_data)
         return jsonify({"message": "添加成功"})
@@ -819,7 +827,13 @@ def manage_elevenlabs_keys():
         if action == 'toggle':
             index = data.get('index')
             if index is not None and 0 <= index < len(keys_data):
-                keys_data[index]['enabled'] = not keys_data[index].get('enabled', True)
+                new_enabled = not keys_data[index].get('enabled', True)
+                keys_data[index]['enabled'] = new_enabled
+                # 手动操作优先级最高，避免被自动恢复/自动停用逻辑覆盖
+                keys_data[index]['manual_disabled'] = (not new_enabled)
+                if new_enabled:
+                    keys_data[index]['auto_disabled'] = False
+                    keys_data[index]['auto_disabled_reason'] = ""
                 file_data['keys_with_status'] = keys_data
                 save_data(file_data)
                 return jsonify({"message": "状态已更新", "enabled": keys_data[index]['enabled']})
@@ -917,8 +931,12 @@ def _select_elevenlabs_key(keys, key_index=None, rotate_index=None):
 
     return keys[idx]
 
-def _set_elevenlabs_key_enabled(api_key, enabled, reason=""):
-    """按 key 值更新启用状态，返回是否发生变更。"""
+def _set_elevenlabs_key_enabled(api_key, enabled, reason="", source="auto"):
+    """按 key 值更新启用状态，返回是否发生变更。
+    source:
+      - auto: 由后端自动逻辑触发（会记录 auto_disabled）
+      - manual: 人工触发（会写入 manual_disabled）
+    """
     if not api_key:
         return False
 
@@ -938,15 +956,65 @@ def _set_elevenlabs_key_enabled(api_key, enabled, reason=""):
             single_key = data.get('api_key', '')
             if single_key:
                 old_keys = [single_key]
-        keys_data = [{"key": k.strip(), "enabled": True} for k in old_keys if isinstance(k, str) and k.strip()]
+        keys_data = [{
+            "key": k.strip(),
+            "enabled": True,
+            "manual_disabled": False,
+            "auto_disabled": False,
+            "auto_disabled_reason": ""
+        } for k in old_keys if isinstance(k, str) and k.strip()]
 
     changed = False
     for item in keys_data:
         if item.get('key') == api_key:
+            # 兼容旧数据结构
+            if 'manual_disabled' not in item:
+                item['manual_disabled'] = False
+                changed = True
+            if 'auto_disabled' not in item:
+                item['auto_disabled'] = False
+                changed = True
+            if 'auto_disabled_reason' not in item:
+                item['auto_disabled_reason'] = ""
+                changed = True
+
+            # 手动停用状态下，自动恢复请求应被忽略
+            if source == "auto" and enabled and item.get('manual_disabled', False):
+                break
+
             current_enabled = item.get('enabled', True)
             if current_enabled != enabled:
                 item['enabled'] = enabled
                 changed = True
+
+            if source == "manual":
+                manual_disabled = (not enabled)
+                if item.get('manual_disabled') != manual_disabled:
+                    item['manual_disabled'] = manual_disabled
+                    changed = True
+                if enabled:
+                    if item.get('auto_disabled', False):
+                        item['auto_disabled'] = False
+                        changed = True
+                    if item.get('auto_disabled_reason'):
+                        item['auto_disabled_reason'] = ""
+                        changed = True
+            else:
+                # auto source
+                if not enabled:
+                    if item.get('auto_disabled') != True:
+                        item['auto_disabled'] = True
+                        changed = True
+                    if reason and item.get('auto_disabled_reason') != reason:
+                        item['auto_disabled_reason'] = reason
+                        changed = True
+                else:
+                    if item.get('auto_disabled', False):
+                        item['auto_disabled'] = False
+                        changed = True
+                    if item.get('auto_disabled_reason'):
+                        item['auto_disabled_reason'] = ""
+                        changed = True
             break
 
     if changed:
@@ -1012,6 +1080,8 @@ def _should_auto_disable_elevenlabs_key(error_message):
         "character_limit",
         "credit",
         "insufficient characters",
+        "api 错误[401]",
+        "api 错误[403]",
         "api 错误: 401",
         "api 错误: 403",
         "status code: 401",
@@ -1020,22 +1090,8 @@ def _should_auto_disable_elevenlabs_key(error_message):
         "forbidden",
         "invalid api key",
         "invalid_api_key",
-        "subscription_required",
-        "subscription",
-        "not available for your plan",
-        "not available for your subscription",
-        "requires a paid plan",
-        "requires subscription",
-        "feature_not_available",
-        "permission denied",
-        "does not have access",
-        "you do not have access to this voice",
-        "voice_not_found",
-        "voice not found",
-        "model_not_available",
-        "model_not_supported",
-        "unsupported model",
-        "not allowed to use this model",
+        "account_suspended",
+        "account_disabled",
     ]
     return any(token in msg for token in disable_tokens)
 
@@ -1531,6 +1587,8 @@ def get_all_elevenlabs_quotas():
     for i, key_info in enumerate(keys_data):
         key = key_info.get('key', '') if isinstance(key_info, dict) else key_info
         enabled = key_info.get('enabled', True) if isinstance(key_info, dict) else True
+        manual_disabled = key_info.get('manual_disabled', False) if isinstance(key_info, dict) else False
+        auto_disabled = key_info.get('auto_disabled', False) if isinstance(key_info, dict) else False
         
         if not key:
             continue
@@ -1545,11 +1603,22 @@ def get_all_elevenlabs_quotas():
                 limit = data.get("character_limit", 0)
                 remaining = limit - usage
                 
-                # 自动停用余额不足 200 的 key
-                if remaining < 200 and enabled:
+                # 自动停用余额不足 200 的 key（仅影响非手动停用项）
+                if remaining < 200 and enabled and not manual_disabled:
                     keys_data[i]['enabled'] = False
+                    keys_data[i]['auto_disabled'] = True
+                    keys_data[i]['auto_disabled_reason'] = f"remaining<{200}"
                     keys_changed = True
                     enabled = False
+                    auto_disabled = True
+                # 自动恢复：如果此前是自动停用且余额恢复，则自动启用
+                elif remaining >= 200 and (not enabled) and auto_disabled and not manual_disabled:
+                    keys_data[i]['enabled'] = True
+                    keys_data[i]['auto_disabled'] = False
+                    keys_data[i]['auto_disabled_reason'] = ""
+                    keys_changed = True
+                    enabled = True
+                    auto_disabled = False
                 
                 results.append({
                     "index": i + 1,
@@ -1558,21 +1627,27 @@ def get_all_elevenlabs_quotas():
                     "limit": limit,
                     "remaining": remaining,
                     "percent": round(usage / limit * 100, 1) if limit > 0 else 0,
-                    "enabled": enabled
+                    "enabled": enabled,
+                    "manual_disabled": manual_disabled,
+                    "auto_disabled": auto_disabled
                 })
             else:
                 results.append({
                     "index": i + 1,
                     "key_prefix": key[:8] + "..." + key[-4:],
                     "error": f"API 错误: {response.status_code}",
-                    "enabled": enabled
+                    "enabled": enabled,
+                    "manual_disabled": manual_disabled,
+                    "auto_disabled": auto_disabled
                 })
         except Exception as e:
             results.append({
                 "index": i + 1,
                 "key_prefix": key[:8] + "..." + key[-4:],
                 "error": str(e),
-                "enabled": enabled
+                "enabled": enabled,
+                "manual_disabled": manual_disabled,
+                "auto_disabled": auto_disabled
             })
     
     # 保存自动停用的更改
@@ -1864,11 +1939,13 @@ def elevenlabs_tts_workflow():
         if not text_prefix:
             text_prefix = 'audio'
         
-        # 任务编号前缀：01-文案前缀
-        task_prefix = f"{task_index + 1:02d}-{text_prefix}"
+        # 任务编号前缀：01-文案前缀_日期
+        date_suffix = datetime.date.today().strftime('%m%d')
+        task_prefix = f"{task_index + 1:02d}-{text_prefix}_{date_suffix}"
         
-        # 直接创建三类分组目录（不再先写临时任务目录再 move）
-        video_group = os.path.join(output_dir, '_视频文案', task_prefix)
+        # 直接创建三类分组目录
+        # 视频文案直接放在 _视频文案/ 下，不创建任务子文件夹
+        video_group = os.path.join(output_dir, '_视频文案')
         audio_group = os.path.join(output_dir, '_音频字幕', task_prefix)
         metadata_group = os.path.join(output_dir, '_metadata', task_prefix)
         os.makedirs(video_group, exist_ok=True)
@@ -1982,7 +2059,7 @@ def elevenlabs_tts_workflow():
                 
                 # 使用 Gladia 转录和现有对齐工具
                 # 断行字幕文本直接保存到视频文案分组
-                subtitle_text_filename = f'{task_prefix}-subtitle_text.txt'
+                subtitle_text_filename = f'{task_prefix}.txt'
                 source_text_path = os.path.join(video_group, subtitle_text_filename)
                 with open(source_text_path, 'w', encoding='utf-8') as f:
                     f.write(subtitle_text)
@@ -2045,7 +2122,7 @@ def elevenlabs_tts_workflow():
         if export_mp4:
             try:
                 # 命名：01-文案-black_stereo.mp4（直接写入视频文案分组）
-                mp4_path = os.path.join(video_group, f'{task_prefix}-black_stereo.mp4')
+                mp4_path = os.path.join(video_group, f'{task_prefix}.mp4')
                 
                 # 先获取音频时长
                 duration_cmd = [
@@ -2717,6 +2794,358 @@ def media_convert():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/media/waveform', methods=['POST', 'OPTIONS'])
+def get_waveform():
+    """获取音/视频文件的波形峰值数据，用于前端波形可视化"""
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    data = request.json
+    file_path = data.get('file_path', '')
+    num_peaks = int(data.get('num_peaks', 300))
+
+    if not file_path or not os.path.exists(file_path):
+        return jsonify({"error": "文件不存在"}), 400
+
+    try:
+        import struct
+
+        # 使用 FFmpeg 提取单声道、低采样率的原始 float32 音频数据
+        cmd = [
+            'ffmpeg', '-hide_banner', '-i', file_path,
+            '-ac', '1', '-ar', '8000',
+            '-f', 'f32le', '-'
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=120)
+
+        raw_data = result.stdout
+        num_samples = len(raw_data) // 4  # float32 = 4 bytes
+
+        if num_samples == 0:
+            duration = _get_audio_duration(file_path) or 0
+            return jsonify({"peaks": [], "duration": round(duration, 3), "num_peaks": 0})
+
+        samples = struct.unpack(f'{num_samples}f', raw_data)
+
+        # 计算峰值
+        block_size = max(1, num_samples // num_peaks)
+        peaks = []
+        for i in range(min(num_peaks, num_samples // max(block_size, 1))):
+            start_idx = i * block_size
+            end_idx = min(start_idx + block_size, num_samples)
+            block = samples[start_idx:end_idx]
+            peak = max(abs(s) for s in block) if block else 0
+            peaks.append(peak)
+
+        # 归一化
+        max_peak = max(peaks) if peaks else 1
+        if max_peak > 0:
+            peaks = [round(p / max_peak, 4) for p in peaks]
+
+        duration = _get_audio_duration(file_path) or (num_samples / 8000)
+
+        print(f"[波形] {os.path.basename(file_path)}: {len(peaks)} peaks, {duration:.1f}s")
+        return jsonify({
+            "peaks": peaks,
+            "duration": round(duration, 3),
+            "num_peaks": len(peaks)
+        })
+
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "波形提取超时"}), 500
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"波形提取失败: {str(e)}"}), 500
+
+
+@app.route('/api/media/trim', methods=['POST', 'OPTIONS'])
+def media_trim():
+    """精确裁切视频/音频文件"""
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    data = request.json
+    file_path = data.get('file_path', '')
+    start_time = float(data.get('start', 0))
+    end_time = float(data.get('end', 0))
+    output_dir = data.get('output_dir', '')
+
+    if not file_path or not os.path.exists(file_path):
+        return jsonify({"error": "文件不存在"}), 400
+    if end_time <= start_time:
+        return jsonify({"error": "结束时间必须大于开始时间"}), 400
+
+    try:
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        ext = os.path.splitext(file_path)[1].lower()
+        out_dir = output_dir if output_dir else os.path.dirname(file_path)
+
+        duration = end_time - start_time
+        start_str = _format_scene_time(start_time)
+        end_str = _format_scene_time(end_time)
+        output_filename = f"{base_name}_trimmed_{start_str.replace(':', '.')}-{end_str.replace(':', '.')}{ext}"
+        output_path = os.path.join(out_dir, output_filename)
+
+        precise = data.get('precise', True)  # 默认精确模式
+
+        if precise:
+            # ===== 精确模式：-ss 放在 -i 之后（先解码再定位，帧级精度）=====
+            # 音频用 aac，视频用 libx264 crf 18（高质量）
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', file_path,
+                '-ss', f'{start_time:.3f}',
+                '-to', f'{end_time:.3f}',
+                '-c:v', 'libx264', '-crf', '18', '-preset', 'fast',
+                '-c:a', 'aac', '-b:a', '192k',
+                '-avoid_negative_ts', 'make_zero',
+                output_path
+            ]
+            print(f"[裁切-精确] {base_name} [{start_str} -> {end_str}] => {output_filename}")
+        else:
+            # ===== 快速模式：-ss 放在 -i 之前（关键帧级，很快但不精确）=====
+            cmd = [
+                'ffmpeg', '-y',
+                '-ss', f'{start_time:.3f}',
+                '-i', file_path,
+                '-t', f'{duration:.3f}',
+                '-c', 'copy',
+                '-avoid_negative_ts', 'make_zero',
+                output_path
+            ]
+            print(f"[裁切-快速] {base_name} [{start_str} -> {end_str}] => {output_filename}")
+
+        subprocess.run(cmd, check=True, capture_output=True, timeout=300)
+
+        # 获取输出文件时长
+        out_duration = _get_audio_duration(output_path)
+
+        return jsonify({
+            "message": f"裁切完成: {output_filename}",
+            "output_path": output_path,
+            "output_filename": output_filename,
+            "duration": round(out_duration, 3) if out_duration else round(duration, 3),
+            "mode": "精确" if precise else "快速"
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"裁切失败: {str(e)}"}), 500
+
+
+@app.route('/api/media/scene-detect', methods=['POST', 'OPTIONS'])
+def scene_detect():
+    """场景剪切检测 - 使用 FFmpeg 的 scdet/select 滤镜检测视频中的场景变化"""
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    data = request.json
+    file_path = data.get('file_path', '')
+    threshold = float(data.get('threshold', 0.3))  # 灵敏度, 0.0~1.0, 越小越灵敏
+    min_interval = float(data.get('min_interval', 0.5))  # 场景最小间隔（秒），过滤过于密集的检测结果
+
+    if not file_path or not os.path.exists(file_path):
+        return jsonify({"error": "文件不存在"}), 400
+
+    try:
+        # 获取视频时长
+        duration = _get_audio_duration(file_path)
+        if not duration:
+            return jsonify({"error": "无法获取视频时长"}), 400
+
+        # 获取视频帧率
+        fps_result = subprocess.run([
+            'ffprobe', '-v', 'error',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=r_frame_rate',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            file_path
+        ], capture_output=True, text=True, timeout=30)
+        fps_str = fps_result.stdout.strip()
+        try:
+            if '/' in fps_str:
+                num, den = fps_str.split('/')
+                fps = float(num) / float(den)
+            else:
+                fps = float(fps_str)
+        except Exception:
+            fps = 30.0
+
+        # 获取视频分辨率
+        res_result = subprocess.run([
+            'ffprobe', '-v', 'error',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=width,height',
+            '-of', 'csv=p=0',
+            file_path
+        ], capture_output=True, text=True, timeout=30)
+        resolution = res_result.stdout.strip()
+
+        print(f"[场景检测] 开始分析: {file_path}, 阈值={threshold}, 最小间隔={min_interval}s, FPS={fps:.2f}")
+
+        # 使用 FFmpeg select 滤镜检测场景变化
+        # select='gt(scene,THRESHOLD)' 检测场景变化分数大于阈值的帧
+        # 输出每一帧的时间戳和场景分数
+        cmd = [
+            'ffmpeg', '-hide_banner',
+            '-i', file_path,
+            '-vf', f"select='gt(scene,{threshold})',showinfo",
+            '-f', 'null', '-'
+        ]
+
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=600  # 10分钟超时
+        )
+
+        # 从 stderr 中解析 showinfo 的输出（FFmpeg 的 showinfo 滤镜输出到 stderr）
+        scene_points = []
+        last_time = -min_interval  # 用于去重过近的场景点
+
+        for line in result.stderr.splitlines():
+            if 'showinfo' in line and 'pts_time' in line:
+                # 解析 pts_time
+                import re as _re
+                pts_match = _re.search(r'pts_time:\s*([0-9.]+)', line)
+                if pts_match:
+                    pts_time = float(pts_match.group(1))
+                    # 跳过开头（0~0.5秒的通常是视频开始，不是真正的场景切换）
+                    if pts_time < 0.3:
+                        continue
+                    # 如果距离上个场景点太近，跳过
+                    if pts_time - last_time < min_interval:
+                        continue
+                    # 解析场景分数（如果有）
+                    scene_score = None
+                    # showinfo 不直接输出 scene score，只输出被 select 选中的帧
+                    scene_points.append({
+                        "time": round(pts_time, 3),
+                        "time_str": _format_scene_time(pts_time)
+                    })
+                    last_time = pts_time
+
+        print(f"[场景检测] 检测到 {len(scene_points)} 个场景切换点")
+
+        # 构建片段信息
+        segments = []
+        boundaries = [0] + [p["time"] for p in scene_points] + [duration]
+        for i in range(len(boundaries) - 1):
+            seg_start = boundaries[i]
+            seg_end = boundaries[i + 1]
+            seg_duration = seg_end - seg_start
+            segments.append({
+                "index": i + 1,
+                "start": round(seg_start, 3),
+                "end": round(seg_end, 3),
+                "start_str": _format_scene_time(seg_start),
+                "end_str": _format_scene_time(seg_end),
+                "duration": round(seg_duration, 3),
+                "duration_str": _format_scene_time(seg_duration)
+            })
+
+        return jsonify({
+            "message": f"检测到 {len(scene_points)} 个场景切换点，共 {len(segments)} 个片段",
+            "file": file_path,
+            "duration": round(duration, 3),
+            "fps": round(fps, 2),
+            "resolution": resolution,
+            "threshold": threshold,
+            "scene_points": scene_points,
+            "segments": segments
+        })
+
+    except subprocess.TimeoutExpired:
+        return jsonify({"error": "场景检测超时（超过 10 分钟）"}), 500
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"场景检测失败: {str(e)}"}), 500
+
+
+def _format_scene_time(seconds):
+    """将秒数格式化为 HH:MM:SS.mmm"""
+    h = int(seconds // 3600)
+    m = int((seconds % 3600) // 60)
+    s = seconds % 60
+    if h > 0:
+        return f"{h:02d}:{m:02d}:{s:06.3f}"
+    return f"{m:02d}:{s:06.3f}"
+
+
+@app.route('/api/media/scene-split', methods=['POST', 'OPTIONS'])
+def scene_split():
+    """按场景切换点将视频拆分为独立片段"""
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    data = request.json
+    file_path = data.get('file_path', '')
+    segments = data.get('segments', [])
+    output_dir = data.get('output_dir', '')
+
+    if not file_path or not os.path.exists(file_path):
+        return jsonify({"error": "文件不存在"}), 400
+    if not segments:
+        return jsonify({"error": "没有指定要导出的片段"}), 400
+
+    try:
+        base_name = os.path.splitext(os.path.basename(file_path))[0]
+        ext = os.path.splitext(file_path)[1].lower()
+        out_dir = output_dir if output_dir else os.path.dirname(file_path)
+        scene_output_dir = os.path.join(out_dir, f"{base_name}_scenes")
+        os.makedirs(scene_output_dir, exist_ok=True)
+
+        exported = []
+        total = len(segments)
+
+        for i, seg in enumerate(segments):
+            start = float(seg.get('start', 0))
+            end = float(seg.get('end', 0))
+            seg_duration = end - start
+
+            if seg_duration <= 0:
+                continue
+
+            idx = seg.get('index', i + 1)
+            output_filename = f"{base_name}_scene{idx:03d}{ext}"
+            output_path = os.path.join(scene_output_dir, output_filename)
+
+            # 使用 ffmpeg 精确切割（重编码，帧级精度）
+            cmd = [
+                'ffmpeg', '-y',
+                '-i', file_path,
+                '-ss', f'{start:.3f}',
+                '-to', f'{end:.3f}',
+                '-c:v', 'libx264', '-crf', '18', '-preset', 'fast',
+                '-c:a', 'aac', '-b:a', '192k',
+                '-avoid_negative_ts', 'make_zero',
+                output_path
+            ]
+
+            print(f"[场景拆分-精确] ({i+1}/{total}) {output_filename} [{_format_scene_time(start)} -> {_format_scene_time(end)}]")
+            subprocess.run(cmd, check=True, capture_output=True, timeout=300)
+            exported.append({
+                "path": output_path,
+                "filename": output_filename,
+                "index": idx,
+                "start": start,
+                "end": end,
+                "duration": round(seg_duration, 3)
+            })
+
+        return jsonify({
+            "message": f"成功导出 {len(exported)} 个片段到 {scene_output_dir}",
+            "output_dir": scene_output_dir,
+            "files": exported
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"场景拆分失败: {str(e)}"}), 500
+
 
 @app.route('/api/audio/smart-split-analyze', methods=['POST', 'OPTIONS'])
 def smart_split_analyze():

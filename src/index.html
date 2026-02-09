@@ -294,6 +294,7 @@
             <button class="sub-tab active" data-subtab="media-logo">🎨 Logo 叠加</button>
             <button class="sub-tab" data-subtab="media-watermark">✏️ 文字水印</button>
             <button class="sub-tab" data-subtab="media-format">🔧 格式转换</button>
+            <button class="sub-tab" data-subtab="media-scene">✂️ 场景检测</button>
           </div>
 
           <!-- ========== Logo 叠加模块 ========== -->
@@ -750,6 +751,78 @@
                   <input type="checkbox" id="export-split-mp4" checked>
                   导出黑屏 MP4 (原始完整音频，不裁切)
                 </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- ========== 场景检测模块 ========== -->
+          <div id="media-scene-subtab" class="subtab-content">
+            <!-- 视频文件选择（支持多选） -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">🎬 选择要检测的视频文件（支持批量）</h4>
+              <div class="file-input-group" id="scene-drop-zone"
+                style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 12px; transition: all 0.2s;">
+                <input type="text" id="scene-video-path" class="input file-path" placeholder="选择或拖拽视频文件（支持多选）" readonly>
+                <input type="file" id="scene-video-input" class="hidden-file-input"
+                  accept=".mp4,.mov,.mkv,.avi,.wmv,.flv,.webm,.m4v" multiple>
+                <button class="btn btn-secondary"
+                  onclick="document.getElementById('scene-video-input').click()">选择文件</button>
+                <button class="btn btn-secondary" onclick="clearSceneFiles()" style="font-size: 12px;">🧹 清空</button>
+              </div>
+            </div>
+
+            <!-- 检测参数 -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">⚙️ 检测参数</h4>
+              <div class="param-row" style="flex-wrap: wrap; gap: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>灵敏度:</label>
+                  <input type="range" id="scene-threshold" min="0.1" max="0.8" step="0.05" value="0.3"
+                    style="width: 150px;"
+                    oninput="document.getElementById('scene-threshold-label').textContent = this.value">
+                  <span id="scene-threshold-label"
+                    style="font-size: 12px; color: var(--text-muted); min-width: 30px;">0.3</span>
+                  <span style="font-size: 11px; color: var(--text-muted);">（越小越灵敏）</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>最小间隔:</label>
+                  <input type="number" id="scene-min-interval" class="input input-small" value="0.5" min="0.1" max="10"
+                    step="0.1" style="width: 70px;">
+                  <span style="font-size: 11px; color: var(--text-muted);">秒</span>
+                </div>
+              </div>
+              <p class="hint" style="margin-top: 8px;">灵敏度值越小检测到的场景切换越多。建议先用默认值 0.3 分析，如果太多或太少再调整。</p>
+            </div>
+
+            <!-- 批量操作按钮 -->
+            <div class="form-section" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+              <button id="scene-detect-btn" class="btn btn-primary" onclick="startSceneDetectAll()"
+                style="min-width: 160px;">
+                🔍 批量场景检测
+              </button>
+              <button class="btn btn-primary" id="scene-export-all-btn" onclick="exportAllScenes()"
+                style="min-width: 160px; display: none;">
+                📦 批量导出全部
+              </button>
+              <button class="btn btn-secondary" onclick="openSceneOutputDir()"
+                style="padding: 6px 12px; font-size: 12px;">
+                📁 打开输出目录
+              </button>
+              <span id="scene-detect-status" class="status-text" style="font-size: 13px;">就绪</span>
+            </div>
+
+            <!-- 文件卡片列表（每个文件独立的检测结果） -->
+            <div id="scene-file-cards" class="form-section" style="display: flex; flex-direction: column; gap: 12px;">
+              <p class="hint">请先选择视频文件。</p>
+            </div>
+
+            <!-- 导出状态 -->
+            <div id="scene-export-status" class="form-section hidden">
+              <div class="status-box">
+                <span id="scene-export-text" class="status-text">导出中...</span>
+                <div id="scene-export-progress" class="progress-bar">
+                  <div class="progress-bar-inner" style="width: 0%;"></div>
+                </div>
               </div>
             </div>
           </div>
@@ -1224,6 +1297,388 @@
       </section>
     </main>
   </div>
+
+  <!-- ========== 裁切弹窗 ========== -->
+  <div id="trim-modal" class="trim-modal-overlay" style="display: none;">
+    <div class="trim-modal-box">
+      <!-- 标题栏 -->
+      <div class="trim-modal-header">
+        <h3 style="margin: 0; font-size: 16px;">✂️ 手动裁切 - <span id="trim-file-name">video.mp4</span></h3>
+        <button class="btn btn-secondary" onclick="closeTrimModal()" style="padding: 4px 12px; font-size: 13px;">✕
+          关闭</button>
+      </div>
+
+      <!-- 视频播放器 -->
+      <div class="trim-video-container">
+        <video id="trim-video-player" class="trim-video-player" preload="auto">
+          您的浏览器不支持视频播放
+        </video>
+        <!-- 播放控制遮罩 -->
+        <div id="trim-video-overlay" class="trim-video-overlay" onclick="toggleTrimPlay()">
+          <span id="trim-play-icon" class="trim-play-icon">▶</span>
+        </div>
+      </div>
+
+      <!-- 波形 + 时间轴 -->
+      <div class="trim-timeline-section">
+        <div class="trim-timeline-container" id="trim-timeline-container">
+          <!-- 波形画布 -->
+          <canvas id="trim-waveform-canvas" class="trim-waveform-canvas"></canvas>
+          <!-- IN/OUT 手柄覆盖层 -->
+          <div id="trim-handle-in" class="trim-handle trim-handle-in" title="拖动设置起点">
+            <div class="trim-handle-label">IN</div>
+          </div>
+          <div id="trim-handle-out" class="trim-handle trim-handle-out" title="拖动设置终点">
+            <div class="trim-handle-label">OUT</div>
+          </div>
+          <!-- 播放头 -->
+          <div id="trim-playhead" class="trim-playhead"></div>
+          <!-- 选区遮罩 -->
+          <div id="trim-mask-left" class="trim-mask trim-mask-left"></div>
+          <div id="trim-mask-right" class="trim-mask trim-mask-right"></div>
+        </div>
+        <!-- 时间刻度 -->
+        <div id="trim-time-ruler" class="trim-time-ruler"></div>
+      </div>
+
+      <!-- 播放控制条 -->
+      <div class="trim-controls">
+        <div class="trim-controls-left">
+          <button class="btn btn-secondary" onclick="trimJumpToIn()" title="跳到IN点" style="padding: 4px 8px;">⏮
+            IN</button>
+          <button class="btn btn-secondary" onclick="toggleTrimPlay()" id="trim-play-btn" style="padding: 4px 12px;">▶
+            播放</button>
+          <button class="btn btn-secondary" onclick="trimJumpToOut()" title="跳到OUT点" style="padding: 4px 8px;">OUT
+            ⏭</button>
+          <span id="trim-current-time"
+            style="font-family: monospace; font-size: 13px; color: var(--text-secondary); margin-left: 8px;">00:00.000</span>
+          <span style="color: var(--text-muted); font-size: 12px; margin: 0 4px;">/</span>
+          <span id="trim-total-time"
+            style="font-family: monospace; font-size: 13px; color: var(--text-muted);">00:00.000</span>
+        </div>
+        <div class="trim-controls-right" style="gap: 6px;">
+          <span style="font-size: 12px; color: var(--text-muted);">速度:</span>
+          <select id="trim-speed" onchange="setTrimSpeed()"
+            style="font-size: 12px; padding: 2px 4px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px;">
+            <option value="0.25">0.25x</option>
+            <option value="0.5">0.5x</option>
+            <option value="1" selected>1x</option>
+            <option value="1.5">1.5x</option>
+            <option value="2">2x</option>
+          </select>
+          <span style="font-size: 12px; color: var(--text-muted); margin-left: 8px;">缩放:</span>
+          <button class="btn btn-secondary" onclick="trimZoomIn()" style="padding: 3px 6px; font-size: 11px;"
+            title="放大 (+)">🔍+</button>
+          <button class="btn btn-secondary" onclick="trimZoomOut()" style="padding: 3px 6px; font-size: 11px;"
+            title="缩小 (-)">🔍−</button>
+          <button class="btn btn-secondary" onclick="trimZoomReset()" style="padding: 3px 6px; font-size: 11px;"
+            title="复位 (0)">↺</button>
+          <button class="btn btn-secondary" onclick="trimZoomToPlayhead()" style="padding: 3px 6px; font-size: 11px;"
+            title="定位到播放头">🎯</button>
+        </div>
+      </div>
+
+      <!-- IN/OUT 精确设置 -->
+      <div class="trim-inout-section">
+        <div class="trim-inout-group">
+          <label style="font-size: 12px; color: var(--accent); font-weight: 600;">🟢 IN 起点</label>
+          <input type="text" id="trim-in-time" class="input trim-time-input" value="00:00.000"
+            onchange="onTrimTimeInputChange('in')">
+          <button class="btn btn-secondary" onclick="setTrimInAtCurrent()" style="padding: 3px 8px; font-size: 11px;"
+            title="将当前播放位置设为IN点">📍 标记</button>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-size: 12px; color: var(--text-muted);">选区时长:</span>
+          <span id="trim-selection-duration"
+            style="font-family: monospace; font-size: 14px; color: var(--text-primary); font-weight: 600;">00:00.000</span>
+        </div>
+        <div class="trim-inout-group">
+          <label style="font-size: 12px; color: #ff4757; font-weight: 600;">🔴 OUT 终点</label>
+          <input type="text" id="trim-out-time" class="input trim-time-input" value="00:00.000"
+            onchange="onTrimTimeInputChange('out')">
+          <button class="btn btn-secondary" onclick="setTrimOutAtCurrent()" style="padding: 3px 8px; font-size: 11px;"
+            title="将当前播放位置设为OUT点">📍 标记</button>
+        </div>
+      </div>
+
+      <!-- 导出区 -->
+      <div class="trim-export-section" style="flex-wrap: wrap;">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <button class="btn btn-secondary" onclick="previewTrimSelection()"
+            style="padding: 8px 16px; font-size: 13px;">
+            ▶ 预览选区 (IN→OUT)
+          </button>
+          <button class="btn btn-secondary" onclick="trimStepFrame(-1)" style="padding: 6px 10px; font-size: 12px;"
+            title="后退1帧">← 1帧</button>
+          <button class="btn btn-secondary" onclick="trimStepFrame(1)" style="padding: 6px 10px; font-size: 12px;"
+            title="前进1帧">1帧 →</button>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <label class="checkbox-label" style="font-size: 12px;">
+            <input type="checkbox" id="trim-precise-mode" checked>
+            <span>精确模式</span>
+          </label>
+          <span style="font-size: 11px; color: var(--text-muted);">（精确=重编码帧级精准，关闭=快速但只能在关键帧切割）</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 12px;">
+          <button class="btn btn-primary" onclick="executeTrim()" style="padding: 8px 24px; font-size: 14px;">
+            ✂️ 导出裁切片段
+          </button>
+          <span id="trim-export-status" style="font-size: 13px; color: var(--text-muted);"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    /* 裁切弹窗样式 */
+    .trim-modal-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.85);
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      backdrop-filter: blur(6px);
+    }
+
+    .trim-modal-box {
+      background: var(--bg-primary);
+      border-radius: 12px;
+      width: 90vw;
+      max-width: 1100px;
+      max-height: 92vh;
+      overflow-y: auto;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .trim-modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .trim-video-container {
+      position: relative;
+      background: #000;
+      width: 100%;
+      max-height: 45vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .trim-video-player {
+      width: 100%;
+      max-height: 45vh;
+      object-fit: contain;
+      display: block;
+    }
+
+    .trim-video-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.2s;
+    }
+
+    .trim-video-overlay:hover {
+      background: rgba(0, 0, 0, 0.15);
+    }
+
+    .trim-play-icon {
+      font-size: 48px;
+      color: rgba(255, 255, 255, 0.8);
+      opacity: 0;
+      transition: opacity 0.2s;
+    }
+
+    .trim-video-overlay:hover .trim-play-icon {
+      opacity: 1;
+    }
+
+    .trim-timeline-section {
+      padding: 12px 20px 0;
+    }
+
+    .trim-timeline-container {
+      position: relative;
+      height: 100px;
+      background: var(--bg-tertiary);
+      border-radius: 6px;
+      overflow: hidden;
+      cursor: pointer;
+    }
+
+    .trim-waveform-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .trim-handle {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 18px;
+      cursor: col-resize;
+      z-index: 10;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      transition: width 0.15s;
+    }
+
+    .trim-handle:hover {
+      width: 24px;
+    }
+
+    .trim-handle-in {
+      left: 0;
+      background: rgba(46, 213, 115, 0.55);
+      border-right: 3px solid #2ed573;
+      box-shadow: 2px 0 8px rgba(46, 213, 115, 0.4);
+    }
+
+    .trim-handle-out {
+      right: 0;
+      background: rgba(255, 71, 87, 0.55);
+      border-left: 3px solid #ff4757;
+      box-shadow: -2px 0 8px rgba(255, 71, 87, 0.4);
+    }
+
+    .trim-handle-label {
+      font-size: 11px;
+      font-weight: 700;
+      color: #fff;
+      padding: 3px 3px;
+      margin-top: 2px;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+    }
+
+    .trim-playhead {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: #fff;
+      z-index: 12;
+      cursor: col-resize;
+      box-shadow: 0 0 6px rgba(255, 255, 255, 0.6);
+    }
+
+    /* 加大可点击区域 */
+    .trim-playhead::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      left: -6px;
+      width: 14px;
+      cursor: col-resize;
+    }
+
+    /* 顶部三角指示器 */
+    .trim-playhead::after {
+      content: '';
+      position: absolute;
+      top: -2px;
+      left: -5px;
+      width: 0;
+      height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 7px solid #fff;
+    }
+
+    .trim-mask {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      background: rgba(0, 0, 0, 0.55);
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    .trim-mask-left {
+      left: 0;
+    }
+
+    .trim-mask-right {
+      right: 0;
+    }
+
+    .trim-time-ruler {
+      display: flex;
+      justify-content: space-between;
+      padding: 3px 0;
+      font-size: 10px;
+      color: var(--text-muted);
+      font-family: monospace;
+    }
+
+    .trim-controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 20px;
+    }
+
+    .trim-controls-left,
+    .trim-controls-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .trim-inout-section {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 20px;
+      gap: 16px;
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border-color);
+    }
+
+    .trim-inout-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .trim-time-input {
+      width: 100px;
+      text-align: center;
+      font-family: monospace;
+      font-size: 13px;
+      padding: 4px 6px;
+    }
+
+    .trim-export-section {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      padding: 14px 20px;
+      border-top: 1px solid var(--border-color);
+    }
+  </style>
 
   <script src="app.js"></script>
   <script src="voiceover-workflow.js"></script>

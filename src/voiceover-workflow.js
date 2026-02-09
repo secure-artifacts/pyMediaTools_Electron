@@ -28,6 +28,10 @@ async function vwPasteFromClipboard() {
         const clipboardItems = await navigator.clipboard.read();
         let rows = [];
 
+        // 读取当前全选复选框状态作为新任务默认值
+        const defaultSplit = document.getElementById('vw-select-all-split')?.checked ?? true;
+        const defaultMp4 = document.getElementById('vw-select-all-mp4')?.checked ?? false;
+
         for (const item of clipboardItems) {
             // 优先解析 HTML
             if (item.types.includes('text/html')) {
@@ -57,7 +61,7 @@ async function vwPasteFromClipboard() {
                         const subtitleText = getCellTextWithBreaks(cells[1]);
                         const voiceId = cells[2]?.textContent.trim() || '';
                         if (ttsText) {
-                            rows.push({ ttsText, subtitleText, voiceId, split: true, exportMp4: false });
+                            rows.push({ ttsText, subtitleText, voiceId, split: defaultSplit, exportMp4: defaultMp4 });
                         }
                     }
                 });
@@ -76,8 +80,8 @@ async function vwPasteFromClipboard() {
                             ttsText: parts[0]?.trim() || '',
                             subtitleText: parts[1]?.trim() || '',
                             voiceId: parts[2]?.trim() || '',
-                            split: true,
-                            exportMp4: false
+                            split: defaultSplit,
+                            exportMp4: defaultMp4
                         });
                     }
                 });
@@ -357,7 +361,8 @@ async function startVoiceoverWorkflow() {
                         voice_id: voiceId,
                         model_id: modelId,
                         task_index: i,
-                        need_split: task.split,
+                        // 兜底互斥：导出黑屏MP4时，强制不拆分
+                        need_split: task.exportMp4 ? false : task.split,
                         max_duration: maxDuration,
                         subtitle_text: task.subtitleText,
                         export_mp4: task.exportMp4,  // 从任务读取

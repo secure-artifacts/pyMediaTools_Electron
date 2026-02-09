@@ -83,11 +83,15 @@ function getPythonPath() {
         log('Vendor Python not found on macOS, trying system Python');
     }
 
-    // 回退: 尝试系统 Python
+    // 回退: 尝试系统 Python（优先使用安装了依赖的 Python）
     const pythonPaths = [
-        '/usr/bin/python3',
-        '/usr/local/bin/python3',
-        '/opt/homebrew/bin/python3',
+        '/opt/homebrew/bin/python3',                                    // Homebrew (Apple Silicon)
+        '/usr/local/bin/python3',                                       // Homebrew (Intel) or user-installed
+        '/Library/Frameworks/Python.framework/Versions/3.13/bin/python3', // Python.org 3.13
+        '/Library/Frameworks/Python.framework/Versions/3.12/bin/python3', // Python.org 3.12
+        '/Library/Frameworks/Python.framework/Versions/3.11/bin/python3', // Python.org 3.11
+        '/Library/Frameworks/Python.framework/Versions/3.10/bin/python3', // Python.org 3.10
+        '/usr/bin/python3',                                             // System Python (no pip packages)
         'python3',
         'python'
     ];
@@ -115,6 +119,17 @@ function getFfmpegBinPath() {
             return vendorFfmpeg;
         }
     }
+
+    // macOS: 检查打包的 FFmpeg
+    if (process.platform === 'darwin') {
+        const vendorFfmpeg = path.join(getResourcePath('vendor'), 'ffmpeg');
+        log(`Checking macOS vendor FFmpeg at: ${vendorFfmpeg}`);
+        if (fs.existsSync(vendorFfmpeg) && fs.existsSync(path.join(vendorFfmpeg, 'ffmpeg'))) {
+            log('Using vendor FFmpeg on macOS');
+            return vendorFfmpeg;
+        }
+    }
+
     return null;
 }
 
@@ -124,9 +139,31 @@ function getEnv() {
 
     const ffmpegPath = getFfmpegBinPath();
     if (ffmpegPath) {
+        // 优先使用打包的 FFmpeg
         env.PATH = `${ffmpegPath}${path.delimiter}${env.PATH || ''}`;
-        env.FFMPEG_PATH = path.join(ffmpegPath, 'ffmpeg.exe');
-        env.FFPROBE_PATH = path.join(ffmpegPath, 'ffprobe.exe');
+
+        if (process.platform === 'win32') {
+            env.FFMPEG_PATH = path.join(ffmpegPath, 'ffmpeg.exe');
+            env.FFPROBE_PATH = path.join(ffmpegPath, 'ffprobe.exe');
+        } else {
+            // macOS/Linux
+            env.FFMPEG_PATH = path.join(ffmpegPath, 'ffmpeg');
+            env.FFPROBE_PATH = path.join(ffmpegPath, 'ffprobe');
+        }
+        log(`Using bundled FFmpeg: ${env.FFMPEG_PATH}`);
+    } else if (process.platform === 'darwin') {
+        // macOS: 回退到系统安装的 FFmpeg
+        const macPaths = [
+            '/opt/homebrew/bin',           // Homebrew Apple Silicon
+            '/usr/local/bin',              // Homebrew Intel / user-installed
+            '/opt/local/bin',              // MacPorts
+            '/usr/bin'
+        ];
+        const existingPath = env.PATH || '';
+        const additionalPaths = macPaths.filter(p => !existingPath.includes(p)).join(path.delimiter);
+        if (additionalPaths) {
+            env.PATH = `${additionalPaths}${path.delimiter}${existingPath}`;
+        }
     }
 
     if (process.platform === 'win32') {
@@ -230,6 +267,14 @@ async function startPythonBackend() {
     if (!fs.existsSync(scriptPath)) {
         log(`ERROR: Server script not found at: ${scriptPath}`);
         showBackendError(`后端脚本未找到: ${scriptPath}`);
+        return;
+    }
+
+    // 先检查是否已有健康的后端在运行
+    const alreadyHealthy = await checkBackendHealth();
+    if (alreadyHealthy) {
+        log('Backend already running and healthy, skipping restart');
+        backendStartAttempts = 0;
         return;
     }
 

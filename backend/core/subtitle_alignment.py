@@ -1,6 +1,7 @@
 """
 字幕对齐核心逻辑 - 从 SW_GenSubTitle/audio_subtitle_gen_and_checker.py 移植
 """
+import os
 from diff_match_patch import diff_match_patch
 import re
 from .subtitle_utils import wirite_to_path, word_split_by, replace_symbols_to_one
@@ -22,6 +23,8 @@ def process_diffs_with_audio_positions_strong(params):
     source_up_order = params["source_up_order"]
     export_fcpxml = params["export_fcpxml"]
     seamless_fcpxml = params["seamless_fcpxml"]
+    source_srt_path = params.get("source_srt_path")
+    fcpxml_path = params.get("fcpxml_path")
     
     merge_text = ""
     source_text = ""
@@ -344,8 +347,16 @@ def process_diffs_with_audio_positions_strong(params):
     if len(text) != len(source_text_with_no_info):
         return f"核对源文本段落长度不同{len(text)}和{len(source_text_with_no_info)}"
 
-    # 写入原srt - 格式: {文件名}_{语言}_source.srt
-    wirite_to_path(source_srt, directory, title + "_" + language + "_source", "srt")
+    # 写入原srt（可显式指定完整路径，未指定则保持原命名规则）
+    if source_srt_path:
+        srt_dir = os.path.dirname(source_srt_path)
+        if srt_dir:
+            os.makedirs(srt_dir, exist_ok=True)
+        with open(source_srt_path, 'w', encoding='utf-8') as f:
+            f.write(source_srt)
+    else:
+        # 默认格式: {文件名}_{语言}_source.srt
+        wirite_to_path(source_srt, directory, title + "_" + language + "_source", "srt")
 
     # 开始写入翻译srt
     for k, value in translate_text_dict.items():
@@ -361,7 +372,13 @@ def process_diffs_with_audio_positions_strong(params):
             print("翻译文本为空，不再生成合并srt文件。")
             
     if export_fcpxml:
-        save_path = directory + "/" + title + "_" + language + ".fcpxml"
+        if fcpxml_path:
+            save_path = fcpxml_path
+            fcpxml_dir = os.path.dirname(save_path)
+            if fcpxml_dir:
+                os.makedirs(fcpxml_dir, exist_ok=True)
+        else:
+            save_path = directory + "/" + title + "_" + language + ".fcpxml"
         
         translate_srt_list = []
         for k, value in translate_text_dict.items():
@@ -395,7 +412,8 @@ def clean_text(text):
 
 def audio_subtitle_search_diffent_strong(current_language, directory, file_name, generation_subtitle_array,
                                         generation_subtitle_text, source_text_with_info, translate_text_dict,
-                                        gen_merge_srt, source_up_order, export_fcpxml, seamless_fcpxml):
+                                        gen_merge_srt, source_up_order, export_fcpxml, seamless_fcpxml,
+                                        source_srt_path=None, fcpxml_path=None):
     """主对齐函数"""
     source_text_with_no_info = ""
     for content in source_text_with_info["contents"]:
@@ -418,6 +436,8 @@ def audio_subtitle_search_diffent_strong(current_language, directory, file_name,
         "source_up_order": source_up_order,
         "export_fcpxml": export_fcpxml,
         "seamless_fcpxml": seamless_fcpxml,
+        "source_srt_path": source_srt_path,
+        "fcpxml_path": fcpxml_path,
         'source_text_with_no_info': source_text_with_no_info,
         "translate_text_dict": translate_text_dict,
         'generation_subtitle_text': generation_subtitle_text,

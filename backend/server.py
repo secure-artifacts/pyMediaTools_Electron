@@ -12,6 +12,7 @@ import tempfile
 import threading
 import re
 import subprocess
+import shutil
 
 # Windows 控制台 UTF-8 编码支持
 if sys.platform == 'win32':
@@ -916,6 +917,187 @@ def _select_elevenlabs_key(keys, key_index=None, rotate_index=None):
 
     return keys[idx]
 
+def _set_elevenlabs_key_enabled(api_key, enabled, reason=""):
+    """按 key 值更新启用状态，返回是否发生变更。"""
+    if not api_key:
+        return False
+
+    settings_file = os.path.join(os.path.dirname(__file__), 'elevenlabs_settings.json')
+    data = {}
+    if os.path.exists(settings_file):
+        with open(settings_file, 'r') as f:
+            data = json.load(f)
+
+    keys_data = data.get('keys_with_status') or []
+    if not keys_data:
+        # 兼容旧格式并升级到新格式
+        old_keys = data.get('api_keys') or []
+        if isinstance(old_keys, str):
+            old_keys = [old_keys]
+        if not old_keys:
+            single_key = data.get('api_key', '')
+            if single_key:
+                old_keys = [single_key]
+        keys_data = [{"key": k.strip(), "enabled": True} for k in old_keys if isinstance(k, str) and k.strip()]
+
+    changed = False
+    for item in keys_data:
+        if item.get('key') == api_key:
+            current_enabled = item.get('enabled', True)
+            if current_enabled != enabled:
+                item['enabled'] = enabled
+                changed = True
+            break
+
+    if changed:
+        data['keys_with_status'] = keys_data
+        with open(settings_file, 'w') as f:
+            json.dump(data, f, indent=2)
+        action = "停用" if not enabled else "启用"
+        key_prefix = f"{api_key[:8]}...{api_key[-4:]}" if len(api_key) >= 12 else api_key
+        if reason:
+            print(f"[ElevenLabs] 已自动{action} Key {key_prefix}，原因: {reason}")
+        else:
+            print(f"[ElevenLabs] 已自动{action} Key {key_prefix}")
+
+    return changed
+
+def _is_elevenlabs_key_retryable_error(error_message):
+    """判断该错误是否应自动切换到下一个 Key。"""
+    msg = (error_message or "").lower()
+    retry_tokens = [
+        "api 错误[401]",
+        "api 错误[403]",
+        "api 错误[429]",
+        "api 错误[422]",
+        "quota_exceeded",
+        "insufficient",
+        "character_limit",
+        "credit",
+        "api 错误: 401",
+        "api 错误: 403",
+        "api 错误: 429",
+        "status code: 401",
+        "status code: 403",
+        "status code: 429",
+        "unauthorized",
+        "forbidden",
+        "invalid api key",
+        "invalid_api_key",
+        "too many requests",
+        "detected_unusual_activity",
+        "unusual_activity",
+        "subscription",
+        "plan",
+        "permission",
+        "not available for your",
+        "not allowed",
+        "model_not_available",
+        "model_not_supported",
+        "voice_not_found",
+        "voice not found",
+        "you do not have access to this voice",
+        "does not have access",
+        "unsupported model",
+        "feature_not_available",
+    ]
+    return any(token in msg for token in retry_tokens)
+
+def _should_auto_disable_elevenlabs_key(error_message):
+    """判断该错误是否应把当前 Key 自动标记为停用。"""
+    msg = (error_message or "").lower()
+    disable_tokens = [
+        "quota_exceeded",
+        "insufficient",
+        "character_limit",
+        "credit",
+        "insufficient characters",
+        "api 错误: 401",
+        "api 错误: 403",
+        "status code: 401",
+        "status code: 403",
+        "unauthorized",
+        "forbidden",
+        "invalid api key",
+        "invalid_api_key",
+        "subscription_required",
+        "subscription",
+        "not available for your plan",
+        "not available for your subscription",
+        "requires a paid plan",
+        "requires subscription",
+        "feature_not_available",
+        "permission denied",
+        "does not have access",
+        "you do not have access to this voice",
+        "voice_not_found",
+        "voice not found",
+        "model_not_available",
+        "model_not_supported",
+        "unsupported model",
+        "not allowed to use this model",
+    ]
+    return any(token in msg for token in disable_tokens)
+
+def _parse_elevenlabs_error(response):
+    """统一解析 ElevenLabs 错误结构，返回 (message, detail_status, detail_code, http_status)。"""
+    message = response.text
+    detail_status = ""
+    detail_code = ""
+    http_status = response.status_code
+    try:
+        error_data = response.json()
+        detail = error_data.get("detail")
+        if isinstance(detail, dict):
+            detail_status = str(detail.get("status") or "")
+            detail_code = str(detail.get("code") or "")
+            message = detail.get("message", message)
+        elif isinstance(detail, str) and detail:
+            message = detail
+    except Exception:
+        pass
+    return message, detail_status, detail_code, http_status
+
+def _request_elevenlabs_tts_with_rotation(keys, voice_id, text, model_id, stability, output_format, key_index=None):
+    """按优先 Key + 自动轮换策略请求 TTS，成功返回 (audio_bytes, used_key)。"""
+    if not keys:
+        raise RuntimeError("未配置 API Key")
+
+    preferred_key = None
+    if key_index is not None and str(key_index).strip() != '':
+        preferred_key = _select_elevenlabs_key(keys, key_index)
+
+    if preferred_key:
+        keys_to_try = [preferred_key] + [k for k in keys if k != preferred_key]
+    else:
+        keys_to_try = list(keys)
+
+    last_err = None
+    for api_key in keys_to_try:
+        try:
+            audio_bytes = _request_elevenlabs_tts(
+                api_key, voice_id, text, model_id, stability, output_format
+            )
+            return audio_bytes, api_key
+        except Exception as exc:
+            err_msg = str(exc)
+            last_err = exc
+            # 非 Key 层错误（如 voice_id 无效）直接抛出，不继续轮换
+            if not _is_elevenlabs_key_retryable_error(err_msg):
+                raise
+
+            # 对明确不可用的 Key 自动停用，避免后续继续打到它
+            if _should_auto_disable_elevenlabs_key(err_msg):
+                try:
+                    _set_elevenlabs_key_enabled(api_key, False, err_msg)
+                except Exception as disable_exc:
+                    print(f"[ElevenLabs] 自动停用 Key 失败: {disable_exc}")
+            continue
+
+    if last_err is not None:
+        raise RuntimeError(f"所有可用 Key 均尝试失败，最后错误: {last_err}")
+    raise RuntimeError("所有可用 Key 均尝试失败")
+
 def _build_tts_save_path(text, output_format, tag, seq_prefix=""):
     import datetime
     import uuid
@@ -988,15 +1170,15 @@ def _request_elevenlabs_tts(api_key, voice_id, text, model_id, stability, output
     response = do_request()
 
     if response.status_code != 200:
-        error_msg = response.text
-        try:
-            error_data = response.json()
-            error_msg = error_data.get("detail", {}).get("message", response.text)
-        except Exception:
-            pass
+        error_msg, detail_status, detail_code, http_status = _parse_elevenlabs_error(response)
         
         # 检测是否是音色数量限制错误
-        is_limit_error = "maximum amount of custom voices" in response.text or "voice_limit" in response.text.lower()
+        merged_error = f"{error_msg} {detail_status} {detail_code}".lower()
+        is_limit_error = (
+            "maximum amount of custom voices" in merged_error
+            or "voice_limit" in merged_error
+            or detail_status == "voice_limit_reached"
+        )
         
         if is_limit_error and auto_delete_on_limit:
             print(f"[TTS自动删除] 检测到音色数量限制，尝试删除最旧的音色...")
@@ -1016,18 +1198,19 @@ def _request_elevenlabs_tts(api_key, voice_id, text, model_id, stability, output
                     print(f"[TTS自动删除] 重试成功！")
                     return retry_response.content
                 else:
-                    # 重试失败，返回新的错误
-                    retry_error = retry_response.text
-                    try:
-                        retry_data = retry_response.json()
-                        retry_error = retry_data.get("detail", {}).get("message", retry_response.text)
-                    except Exception:
-                        pass
-                    raise RuntimeError(f"API 错误 (已自动删除音色「{deleted_name}」但仍失败): {retry_error}")
+                    # 重试失败，返回新的结构化错误
+                    retry_error, retry_status, retry_code, retry_http = _parse_elevenlabs_error(retry_response)
+                    raise RuntimeError(
+                        f"API 错误[{retry_http}][{retry_status or '-'}][{retry_code or '-'}] "
+                        f"(已自动删除音色「{deleted_name}」但仍失败): {retry_error}"
+                    )
             else:
-                raise RuntimeError(f"API 错误: {error_msg} (尝试自动删除音色失败，可能没有可删除的自定义音色)")
+                raise RuntimeError(
+                    f"API 错误[{http_status}][{detail_status or '-'}][{detail_code or '-'}]: {error_msg} "
+                    f"(尝试自动删除音色失败，可能没有可删除的自定义音色)"
+                )
         
-        raise RuntimeError(f"API 错误: {error_msg}")
+        raise RuntimeError(f"API 错误[{http_status}][{detail_status or '-'}][{detail_code or '-'}]: {error_msg}")
 
     return response.content
 
@@ -1085,37 +1268,21 @@ def get_elevenlabs_voices():
                         "category": category
                     })
         
-        # 2. 获取热门社区声音 (50个)
-        try:
-            shared_response = requests.get(
-                "https://api.elevenlabs.io/v1/shared-voices",
-                headers=headers,
-                params={"page_size": 50, "sort": "trending"},
-                timeout=15
-            )
-            
-            if shared_response.status_code == 200:
-                shared_data = shared_response.json()
-                for v in shared_data.get("voices", []):
-                    voice_id = v.get("voice_id") or v.get("public_owner_id")
-                    name = v.get("name", "Unknown")
-                    preview_url = v.get("preview_url", "")
-                    public_owner_id = v.get("public_owner_id", voice_id)
-                    
-                    # 社区声音标注
-                    display_name = f"[社区] {name}"
-                    
-                    if voice_id:
-                        voices_list.append({
-                            "voice_id": voice_id,
-                            "name": display_name,
-                            "preview_url": preview_url,
-                            "can_delete": False,
-                            "category": "shared",
-                            "public_owner_id": public_owner_id
-                        })
-        except Exception as e:
-            print(f"获取社区声音失败: {e}")
+        # 注意：社区声音 (shared-voices) 功能已禁用
+        # 原因：ElevenLabs 免费用户无法通过 API 使用库中的声音
+        # 如需启用，请升级到 Starter 或更高套餐
+        # 
+        # 原代码已注释：
+        # try:
+        #     shared_response = requests.get(
+        #         "https://api.elevenlabs.io/v1/shared-voices",
+        #         headers=headers,
+        #         params={"page_size": 50, "sort": "trending"},
+        #         timeout=15
+        #     )
+        #     ...
+        # except Exception as e:
+        #     print(f"获取社区声音失败: {e}")
         
         return jsonify({"voices": voices_list})
     except Exception as e:
@@ -1443,24 +1610,22 @@ def elevenlabs_tts():
         return jsonify({"error": "未配置 API Key"}), 400
 
     try:
-        api_key = _select_elevenlabs_key(keys, data.get('key_index'))
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-
-    try:
         stability_val = float(stability)
         if stability_val > 1:
             stability_val = stability_val / 100.0
         stability_val = max(0.0, min(1.0, stability_val))
 
-        audio_bytes = _request_elevenlabs_tts(
-            api_key,
+        audio_bytes, used_key = _request_elevenlabs_tts_with_rotation(
+            keys,
             voice_id,
             text,
             model_id,
             stability_val,
-            output_format
+            output_format,
+            key_index=data.get('key_index')
         )
+        used_prefix = f"{used_key[:8]}...{used_key[-4:]}" if len(used_key) >= 12 else used_key
+        print(f"[ElevenLabs TTS] 使用 Key: {used_prefix}")
 
         if not save_path:
             save_path = _build_tts_save_path(text, output_format, "tts")
@@ -1472,6 +1637,8 @@ def elevenlabs_tts():
             "message": "生成成功",
             "file_path": save_path
         })
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1552,7 +1719,8 @@ def elevenlabs_tts_batch():
                 return {"index": idx, "file_path": save_path}, "success"
                 
             except Exception as exc:
-                err_msg = str(exc).lower()
+                err_text = str(exc)
+                err_msg = err_text.lower()
                 
                 # 风控检测
                 if "detected_unusual_activity" in err_msg or "unusual_activity" in err_msg:
@@ -1563,9 +1731,14 @@ def elevenlabs_tts_batch():
                         # 不启用熔断时，标记这个 Key 并继续尝试其他 Key
                         exhausted_keys.add(api_key)
                         continue
-                
-                # 余额不足检测
-                if "quota_exceeded" in err_msg or "insufficient" in err_msg or "exceeded" in err_msg:
+
+                # Key 级可轮换错误（余额不足/鉴权失败/限流等）
+                if _is_elevenlabs_key_retryable_error(err_text):
+                    if _should_auto_disable_elevenlabs_key(err_text):
+                        try:
+                            _set_elevenlabs_key_enabled(api_key, False, err_text)
+                        except Exception as disable_exc:
+                            print(f"[ElevenLabs Batch] 自动停用 Key 失败: {disable_exc}")
                     exhausted_keys.add(api_key)
                     continue  # 尝试下一个 Key
                 
@@ -1586,7 +1759,12 @@ def elevenlabs_tts_batch():
             continue
         
         key_index = item.get('key_index')
-        preferred_key = all_keys[key_index % len(all_keys)] if key_index is not None else None
+        preferred_key = None
+        if key_index is not None and str(key_index).strip() != '':
+            try:
+                preferred_key = _select_elevenlabs_key(all_keys, key_index)
+            except ValueError:
+                preferred_key = None
         
         result, status = try_generate(idx, item, preferred_key)
         results[idx] = result
@@ -1644,13 +1822,18 @@ def elevenlabs_tts_workflow():
     
     if not text or not voice_id:
         return jsonify({"error": "缺少必要参数"}), 400
+
+    # 兜底互斥：黑屏 MP4 模式下不进行智能拆分
+    if export_mp4 and need_split:
+        print(f"[一键配音] task_index={task_index} 检测到 mp4+split 同时开启，已强制关闭拆分")
+        need_split = False
     
-    # 获取 API Key
+    print(f"[一键配音] task_index={task_index}, need_split={need_split}, export_mp4={export_mp4}, export_fcpxml={export_fcpxml}")
+    
+    # 获取 API Key（启用状态）
     api_keys = _load_elevenlabs_keys()
     if not api_keys:
         return jsonify({"error": "未配置 API Key"}), 400
-    
-    api_key = api_keys[0]
     
     try:
         # 创建输出文件夹
@@ -1684,21 +1867,28 @@ def elevenlabs_tts_workflow():
         # 任务编号前缀：01-文案前缀
         task_prefix = f"{task_index + 1:02d}-{text_prefix}"
         
-        # 创建任务文件夹
-        task_folder = os.path.join(output_dir, task_prefix)
-        os.makedirs(task_folder, exist_ok=True)
+        # 直接创建三类分组目录（不再先写临时任务目录再 move）
+        video_group = os.path.join(output_dir, '_视频文案', task_prefix)
+        audio_group = os.path.join(output_dir, '_音频字幕', task_prefix)
+        metadata_group = os.path.join(output_dir, '_metadata', task_prefix)
+        os.makedirs(video_group, exist_ok=True)
+        os.makedirs(audio_group, exist_ok=True)
+        os.makedirs(metadata_group, exist_ok=True)
         
         # Step 1: 生成音频
         model_id = data.get('model_id', 'eleven_v3')  # 默认使用 v3 模型（支持 [pause] 等标签）
         stability = float(data.get('stability', 0.5))
         output_format = data.get('output_format', 'mp3_44100_128')
         
-        audio_bytes = _request_elevenlabs_tts(
-            api_key, voice_id, text, model_id, stability, output_format
+        audio_bytes, used_key = _request_elevenlabs_tts_with_rotation(
+            api_keys, voice_id, text, model_id, stability, output_format,
+            key_index=data.get('key_index')
         )
+        used_prefix = f"{used_key[:8]}...{used_key[-4:]}" if len(used_key) >= 12 else used_key
+        print(f"[一键配音] 任务 {task_index + 1} 使用 Key: {used_prefix}")
         
-        # 文件命名：01-文案-source.mp3
-        source_path = os.path.join(task_folder, f'{task_prefix}-source.mp3')
+        # 文件命名：01-文案-source.mp3（直接写入音频分组）
+        source_path = os.path.join(audio_group, f'{task_prefix}-source.mp3')
         with open(source_path, 'wb') as f:
             f.write(audio_bytes)
         
@@ -1758,8 +1948,8 @@ def elevenlabs_tts_workflow():
                         end_ms = int(cut_points[i + 1] * 1000)
                         segment = audio[start_ms:end_ms]
                         
-                        # 命名：01-文案-part_01.mp3
-                        part_path = os.path.join(task_folder, f'{task_prefix}-part_{i+1:02d}.mp3')
+                        # 命名：01-文案-part_01.mp3（直接写入音频分组）
+                        part_path = os.path.join(audio_group, f'{task_prefix}-part_{i+1:02d}.mp3')
                         segment.export(part_path, format='mp3', bitrate='192k')
                         
                         segments.append({
@@ -1791,15 +1981,16 @@ def elevenlabs_tts_workflow():
                     raise Exception("未配置 Gladia API Key，请在设置中配置后再试")
                 
                 # 使用 Gladia 转录和现有对齐工具
-                # 创建临时文件保存字幕文本
-                source_text_path = os.path.join(task_folder, 'source_text.txt')
+                # 断行字幕文本直接保存到视频文案分组
+                subtitle_text_filename = f'{task_prefix}-subtitle_text.txt'
+                source_text_path = os.path.join(video_group, subtitle_text_filename)
                 with open(source_text_path, 'w', encoding='utf-8') as f:
                     f.write(subtitle_text)
                 
-                # 设置生成路径
+                # 转录中间产物直接保存到 metadata 分组
                 file_name = os.path.splitext(os.path.basename(source_path))[0]
-                generation_subtitle_array_path = os.path.join(task_folder, f'{file_name}_audio_text_withtime.json')
-                generation_subtitle_text_path = os.path.join(task_folder, f'{file_name}_transcription.txt')
+                generation_subtitle_array_path = os.path.join(metadata_group, f'{file_name}_audio_text_withtime.json')
+                generation_subtitle_text_path = os.path.join(metadata_group, f'{file_name}_transcription.txt')
                 
                 # 通过 Gladia 转录
                 # Gladia 需要完整的语言名称，不是简写
@@ -1826,21 +2017,21 @@ def elevenlabs_tts_workflow():
                     source_text_with_info = read_text_with_google_doc(source_text_path)
                     
                     # 执行对齐
-                    result = audio_subtitle_search_diffent_strong(
-                        current_language, task_folder, file_name,
+                    target_srt_path = os.path.join(audio_group, f'{task_prefix}-subtitle.srt')
+                    target_fcpxml_path = os.path.join(metadata_group, f'{task_prefix}-subtitle.fcpxml')
+
+                    audio_subtitle_search_diffent_strong(
+                        current_language, metadata_group, file_name,
                         generation_subtitle_array, generation_subtitle_text,
                         source_text_with_info, {},  # 无翻译文本
                         False, False,  # gen_merge_srt, source_up_order
-                        export_fcpxml, seamless_fcpxml  # 导出 FCPXML（默认启用）
+                        export_fcpxml, seamless_fcpxml,  # 导出 FCPXML（默认启用）
+                        source_srt_path=target_srt_path,
+                        fcpxml_path=target_fcpxml_path
                     )
-                    
-                    # 查找生成的 SRT 文件
-                    for f in os.listdir(task_folder):
-                        if f.endswith('.srt') and not f.startswith(task_prefix):
-                            old_srt = os.path.join(task_folder, f)
-                            srt_path = os.path.join(task_folder, f'{task_prefix}-subtitle.srt')
-                            os.rename(old_srt, srt_path)
-                            break
+
+                    if os.path.exists(target_srt_path):
+                        srt_path = target_srt_path
                 else:
                     raise Exception("Gladia 转录失败，无法生成字幕")
                         
@@ -1849,12 +2040,12 @@ def elevenlabs_tts_workflow():
                 traceback.print_exc()
                 print(f"字幕生成失败: {e}")
         
-        # Step 4: 生成黑屏 MP4（如果需要且不拆分）
+        # Step 4: 生成黑屏 MP4（如果需要）
         mp4_path = None
-        if export_mp4 and not need_split:
+        if export_mp4:
             try:
-                # 命名：01-文案-black_stereo.mp4
-                mp4_path = os.path.join(task_folder, f'{task_prefix}-black_stereo.mp4')
+                # 命名：01-文案-black_stereo.mp4（直接写入视频文案分组）
+                mp4_path = os.path.join(video_group, f'{task_prefix}-black_stereo.mp4')
                 
                 # 先获取音频时长
                 duration_cmd = [
@@ -1878,45 +2069,16 @@ def elevenlabs_tts_workflow():
             except Exception as e:
                 print(f"MP4 生成失败: {e}")
         
-        # Step 5: 清理中间文件，移动到最外层的 _metadata 文件夹（按任务编号分子文件夹）
-        try:
-            # 在 output_dir（最外层）创建 _metadata 文件夹
-            global_metadata_folder = os.path.join(output_dir, '_metadata')
-            # 在 _metadata 中创建以任务编号命名的子文件夹
-            task_metadata_folder = os.path.join(global_metadata_folder, task_prefix)
-            os.makedirs(task_metadata_folder, exist_ok=True)
-            
-            # 移动 txt 和 json 文件到对应的 metadata 子文件夹
-            # 1. 先清理任务文件夹
-            for f in os.listdir(task_folder):
-                file_path = os.path.join(task_folder, f)
-                if os.path.isfile(file_path):
-                    if f.endswith('.txt') or f.endswith('.json'):
-                        dest_path = os.path.join(task_metadata_folder, f)
-                        shutil.move(file_path, dest_path)
-            
-            # 2. 也清理输出根目录中可能残留的中间文件
-            for f in os.listdir(output_dir):
-                file_path = os.path.join(output_dir, f)
-                if os.path.isfile(file_path):
-                    # 跳过 _metadata 文件夹
-                    if f.endswith('.txt') or f.endswith('.json'):
-                        dest_path = os.path.join(task_metadata_folder, f)
-                        try:
-                            shutil.move(file_path, dest_path)
-                        except:
-                            pass  # 忽略移动失败
-        except Exception as e:
-            print(f"清理中间文件失败: {e}")
-        
         return jsonify({
             "audio_path": source_path,
-            "output_folder": task_folder,
+            "output_folder": output_dir,
             "task_prefix": task_prefix,
             "segments": segments,
             "segment_count": len(segments)
         })
         
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
     except Exception as e:
         import traceback
         traceback.print_exc()

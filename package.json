@@ -61,8 +61,15 @@
           ]
         },
         {
-          "from": "vendor/darwin",
-          "to": "vendor",
+          "from": "vendor/darwin/python",
+          "to": "vendor/python",
+          "filter": [
+            "**/*"
+          ]
+        },
+        {
+          "from": "vendor/darwin/ffmpeg",
+          "to": "vendor/ffmpeg",
           "filter": [
             "**/*"
           ]

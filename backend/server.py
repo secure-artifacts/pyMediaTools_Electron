@@ -49,6 +49,24 @@ except ImportError:
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=True)
 
+# 服务启动时间（用于 health 接口返回 uptime）
+_server_start_time = time.time()
+
+# 全局错误处理器 —— 防止未捕获异常导致线程挂起
+@app.errorhandler(Exception)
+def handle_global_exception(e):
+    import traceback
+    traceback.print_exc()
+    return jsonify({"error": f"服务器内部错误: {str(e)}"}), 500
+
+@app.errorhandler(404)
+def handle_404(e):
+    return jsonify({"error": "接口不存在"}), 404
+
+@app.errorhandler(500)
+def handle_500(e):
+    return jsonify({"error": f"服务器错误: {str(e)}"}), 500
+
 # 全局处理 OPTIONS 预检请求
 @app.before_request
 def handle_preflight():
@@ -70,7 +88,13 @@ processing_status = {
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """健康检查"""
-    return jsonify({"status": "ok", "message": "Python backend is running"})
+    uptime = round(time.time() - _server_start_time, 1)
+    return jsonify({
+        "status": "ok",
+        "message": "Python backend is running",
+        "uptime": uptime,
+        "active_threads": threading.active_count()
+    })
 
 @app.route('/assets/<path:filename>', methods=['GET'])
 def serve_assets(filename):
@@ -2129,7 +2153,7 @@ def elevenlabs_tts_workflow():
                     'ffprobe', '-v', 'error', '-show_entries', 'format=duration',
                     '-of', 'default=noprint_wrappers=1:nokey=1', source_path
                 ]
-                duration_result = subprocess.run(duration_cmd, capture_output=True, text=True)
+                duration_result = subprocess.run(duration_cmd, capture_output=True, text=True, timeout=30)
                 audio_duration = float(duration_result.stdout.strip())
                 
                 # 使用 ffmpeg 生成黑屏视频，精确指定时长
@@ -2142,7 +2166,7 @@ def elevenlabs_tts_workflow():
                     '-shortest',
                     mp4_path
                 ]
-                subprocess.run(cmd, check=True, capture_output=True)
+                subprocess.run(cmd, check=True, capture_output=True, timeout=600)
             except Exception as e:
                 print(f"MP4 生成失败: {e}")
         
@@ -2723,13 +2747,13 @@ def media_convert():
                             '-vn', '-c:a', 'libmp3lame', '-b:a', '192k', '-ac', '2',
                             mp3_path
                         ]
-                        subprocess.run(cmd, check=True, capture_output=True)
+                        subprocess.run(cmd, check=True, capture_output=True, timeout=600)
                         converted.append(mp3_path)
                     
                     if export_mp4:
                         mp4_path = os.path.join(out_dir, f"{base_name}_black.mp4")
                         cmd = _build_black_mp4_cmd(file_path, mp4_path, 0, None)
-                        subprocess.run(cmd, check=True, capture_output=True)
+                        subprocess.run(cmd, check=True, capture_output=True, timeout=600)
                         converted.append(mp4_path)
                     
                     continue
@@ -2758,14 +2782,14 @@ def media_convert():
                         if duration is not None:
                             cmd.extend(['-t', f"{duration:.3f}"])
                         cmd.append(mp3_path)
-                        subprocess.run(cmd, check=True, capture_output=True)
+                        subprocess.run(cmd, check=True, capture_output=True, timeout=600)
                         converted.append(mp3_path)
 
                 # 黑屏 MP4 只生成一个完整的（原始音频，不裁切）
                 if export_mp4:
                     mp4_path = os.path.join(out_dir, f"{base_name}_black.mp4")
                     cmd = _build_black_mp4_cmd(file_path, mp4_path, 0, None)
-                    subprocess.run(cmd, check=True, capture_output=True)
+                    subprocess.run(cmd, check=True, capture_output=True, timeout=600)
                     converted.append(mp4_path)
 
                 continue
@@ -2773,7 +2797,7 @@ def media_convert():
             else:
                 continue
             
-            subprocess.run(cmd, check=True, capture_output=True)
+            subprocess.run(cmd, check=True, capture_output=True, timeout=600)
             converted.append(output_path)
         
         # 获取每个文件的时长

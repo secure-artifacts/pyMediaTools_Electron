@@ -93,8 +93,6 @@ let lastHeartbeatSuccess = true;
 function startHeartbeat() {
     // 每30秒发送一次心跳
     heartbeatInterval = setInterval(async () => {
-        if (!backendReady) return; // 如果还没连上，不发心跳
-
         try {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
@@ -105,10 +103,17 @@ function startHeartbeat() {
             clearTimeout(timeoutId);
 
             if (response.ok) {
-                if (!lastHeartbeatSuccess) {
+                if (!lastHeartbeatSuccess || !backendReady) {
                     // 之前断开了，现在恢复了
                     updateStatus('后端服务已恢复连接', 'success');
-                    showToast('后端服务已恢复', 'success');
+                    backendReady = true;
+                    healthCheckSlowMode = false;
+                    healthCheckRetries = 0;
+                    if (!settingsAutoLoaded) {
+                        settingsAutoLoaded = true;
+                        loadSettings(true);
+                    }
+                    showToast('✅ 后端服务已恢复', 'success');
                     lastHeartbeatSuccess = true;
                 }
             } else {
@@ -119,8 +124,10 @@ function startHeartbeat() {
                 // 之前正常，现在断开了
                 updateStatus('后端服务连接断开，尝试重连...', 'error');
                 lastHeartbeatSuccess = false;
+                backendReady = false;
                 // 重新开始健康检查（会尝试重连）
                 healthCheckRetries = 0;
+                healthCheckSlowMode = false;
                 checkBackendHealth();
             }
         }
@@ -1654,7 +1661,8 @@ function adjustWatermarkOffset(dx, dy) {
 
 // 检查后端健康状态
 let healthCheckRetries = 0;
-const MAX_HEALTH_RETRIES = 20; // 最多重试20次（约60秒）
+const MAX_HEALTH_RETRIES = 20; // 快速重试阶段（约60秒）
+let healthCheckSlowMode = false; // 进入慢速重试模式
 
 async function checkBackendHealth() {
     try {
@@ -1667,24 +1675,35 @@ async function checkBackendHealth() {
         clearTimeout(timeoutId);
 
         if (response.ok) {
+            const wasDisconnected = !backendReady || healthCheckSlowMode;
             updateStatus('后端服务已连接', 'success');
             backendReady = true;
             healthCheckRetries = 0;
+            healthCheckSlowMode = false;
             if (!settingsAutoLoaded) {
                 settingsAutoLoaded = true;
                 loadSettings(true);
             }
+            // 如果之前断开过，显示恢复提示
+            if (wasDisconnected && settingsAutoLoaded) {
+                showToast('✅ 后端服务已恢复连接', 'success', 3000);
+            }
         }
     } catch (error) {
         healthCheckRetries++;
+        backendReady = false;
 
-        if (healthCheckRetries >= MAX_HEALTH_RETRIES) {
-            updateStatus(`后端服务无法连接 (已重试${healthCheckRetries}次)，请检查 Python 环境`, 'error');
-            console.error('后端启动失败，可能原因：1.Python未安装 2.依赖包缺失 3.端口5001被占用');
-            // 显示更详细的提示
-            showToast('后端服务无法启动，请检查 Python 是否已安装', 'error', 10000);
+        if (healthCheckRetries >= MAX_HEALTH_RETRIES && !healthCheckSlowMode) {
+            // 切换到慢速重试模式（不放弃，降频继续尝试）
+            healthCheckSlowMode = true;
+            updateStatus('后端服务暂时无法连接，持续重连中...', 'error');
+            console.warn('后端启动失败，进入慢速重连模式 (每10秒一次)');
+            showToast('后端连接中断，正在后台持续重连...', 'error', 6000);
+            setTimeout(checkBackendHealth, 10000); // 10秒一次
+        } else if (healthCheckSlowMode) {
+            // 慢速重试模式：安静地继续尝试，不刷屏
+            setTimeout(checkBackendHealth, 10000);
         } else {
-            const remaining = MAX_HEALTH_RETRIES - healthCheckRetries;
             updateStatus(`等待后端服务启动... (${healthCheckRetries}/${MAX_HEALTH_RETRIES})`, 'error');
             setTimeout(checkBackendHealth, 3000);
         }

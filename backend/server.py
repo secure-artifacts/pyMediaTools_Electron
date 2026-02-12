@@ -3001,10 +3001,17 @@ def scene_detect():
         )
 
         # 从 stderr 中解析 showinfo 的输出（FFmpeg 的 showinfo 滤镜输出到 stderr）
+        stderr_output = result.stderr or ''
+        stdout_output = result.stdout or ''
+
+        # 如果 FFmpeg 返回非零且没有任何输出，说明命令执行失败
+        if result.returncode != 0 and not stderr_output.strip():
+            return jsonify({"error": f"FFmpeg 场景检测命令执行失败 (returncode={result.returncode})"}), 500
+
         scene_points = []
         last_time = -min_interval  # 用于去重过近的场景点
 
-        for line in result.stderr.splitlines():
+        for line in stderr_output.splitlines():
             if 'showinfo' in line and 'pts_time' in line:
                 # 解析 pts_time
                 import re as _re
@@ -3464,6 +3471,409 @@ def download_video_batch():
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/media/batch-thumbnail', methods=['POST', 'OPTIONS'])
+def batch_thumbnail():
+    """批量提取视频首帧截图"""
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    data = request.json
+    folder_path = data.get('folder_path', '')
+    output_dir = data.get('output_dir', '')
+    image_format = data.get('format', 'jpg')  # jpg 或 png
+    quality = int(data.get('quality', 2))  # FFmpeg -q:v, 2=高质量, 5=中等, 10=低
+    # 支持直接传入文件列表（从前端上传的场景）
+    file_list = data.get('files', [])
+
+    if not folder_path and not file_list:
+        return jsonify({"error": "请指定视频文件夹路径或提供文件列表"}), 400
+
+    VIDEO_EXTS = {'.mp4', '.mov', '.mkv', '.avi', '.wmv', '.flv', '.webm', '.m4v',
+                  '.mpg', '.mpeg', '.3gp', '.ts', '.mts', '.m2ts', '.vob'}
+
+    try:
+        # 收集视频文件列表
+        video_files = []
+
+        if folder_path:
+            if not os.path.isdir(folder_path):
+                return jsonify({"error": f"文件夹不存在: {folder_path}"}), 400
+
+            for root, dirs, files in os.walk(folder_path):
+                for fname in sorted(files):
+                    ext = os.path.splitext(fname)[1].lower()
+                    if ext in VIDEO_EXTS:
+                        video_files.append(os.path.join(root, fname))
+        else:
+            # 使用前端传入的文件列表
+            for fp in file_list:
+                if os.path.isfile(fp):
+                    ext = os.path.splitext(fp)[1].lower()
+                    if ext in VIDEO_EXTS:
+                        video_files.append(fp)
+
+        if not video_files:
+            return jsonify({"error": "未找到任何视频文件"}), 400
+
+        # 确定输出目录
+        if not output_dir:
+            if folder_path:
+                output_dir = os.path.join(folder_path, '_thumbnails')
+            else:
+                output_dir = os.path.join(os.path.dirname(video_files[0]), '_thumbnails')
+        os.makedirs(output_dir, exist_ok=True)
+
+        total = len(video_files)
+        success = 0
+        failed = 0
+        results = []
+
+        print(f"[批量截图] 开始处理 {total} 个视频，输出到: {output_dir}")
+
+        for i, video_path in enumerate(video_files):
+            base_name = os.path.splitext(os.path.basename(video_path))[0]
+            out_ext = 'png' if image_format == 'png' else 'jpg'
+            output_path = os.path.join(output_dir, f"{base_name}.{out_ext}")
+
+            # 避免覆盖已生成的截图（加速重跑）
+            if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+                success += 1
+                results.append({"file": os.path.basename(video_path), "output": output_path, "status": "skipped"})
+                if (i + 1) % 100 == 0:
+                    print(f"[批量截图] 进度: {i+1}/{total} (跳过已存在)")
+                continue
+
+            try:
+                cmd = ['ffmpeg', '-y', '-ss', '0', '-i', video_path, '-frames:v', '1']
+                if out_ext == 'jpg':
+                    cmd.extend(['-q:v', str(quality)])
+                cmd.append(output_path)
+
+                subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+                success += 1
+                results.append({"file": os.path.basename(video_path), "output": output_path, "status": "ok"})
+            except subprocess.TimeoutExpired:
+                failed += 1
+                results.append({"file": os.path.basename(video_path), "status": "timeout"})
+            except subprocess.CalledProcessError as e:
+                failed += 1
+                results.append({"file": os.path.basename(video_path), "status": "error",
+                                "error": e.stderr.decode('utf-8', errors='replace')[:200] if e.stderr else str(e)})
+
+            # 每 100 个输出一次进度
+            if (i + 1) % 100 == 0 or (i + 1) == total:
+                print(f"[批量截图] 进度: {i+1}/{total}, 成功={success}, 失败={failed}")
+
+        print(f"[批量截图] 完成! 成功={success}, 失败={failed}, 总计={total}")
+
+        return jsonify({
+            "message": f"批量截图完成: {success} 成功, {failed} 失败, 共 {total} 个视频",
+            "output_dir": output_dir,
+            "total": total,
+            "success": success,
+            "failed": failed,
+            "results": results[:200]  # 避免返回太大的数据，最多返回前 200 条
+        })
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"批量截图失败: {str(e)}"}), 500
+
+
+@app.route('/api/media/batch-thumbnail-progress', methods=['POST', 'OPTIONS'])
+def batch_thumbnail_progress():
+    """批量截图进度查询（用于流式处理场景）"""
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    data = request.json
+    folder_path = data.get('folder_path', '')
+    output_dir = data.get('output_dir', '')
+
+    if not folder_path:
+        return jsonify({"error": "请指定视频文件夹"}), 400
+
+    VIDEO_EXTS = {'.mp4', '.mov', '.mkv', '.avi', '.wmv', '.flv', '.webm', '.m4v',
+                  '.mpg', '.mpeg', '.3gp', '.ts', '.mts', '.m2ts', '.vob'}
+
+    if not output_dir:
+        output_dir = os.path.join(folder_path, '_thumbnails')
+
+    total_videos = 0
+    done_thumbnails = 0
+
+    if os.path.isdir(folder_path):
+        for root, dirs, files in os.walk(folder_path):
+            for fname in files:
+                ext = os.path.splitext(fname)[1].lower()
+                if ext in VIDEO_EXTS:
+                    total_videos += 1
+
+    if os.path.isdir(output_dir):
+        for fname in os.listdir(output_dir):
+            if fname.lower().endswith(('.jpg', '.png')) and os.path.getsize(os.path.join(output_dir, fname)) > 0:
+                done_thumbnails += 1
+
+    return jsonify({
+        "total": total_videos,
+        "done": done_thumbnails,
+        "percent": round(done_thumbnails / total_videos * 100, 1) if total_videos > 0 else 0
+    })
+
+
+# ==================== 感知哈希画面分类 ====================
+
+def _compute_dhash(image_path, hash_size=8):
+    """计算差异哈希 (dHash)，纯 Pillow 实现，无需额外依赖"""
+    from PIL import Image
+    img = Image.open(image_path).convert('L').resize((hash_size + 1, hash_size), Image.LANCZOS)
+    pixels = list(img.getdata())
+    width = hash_size + 1
+
+    hash_val = 0
+    for row in range(hash_size):
+        for col in range(hash_size):
+            idx = row * width + col
+            if pixels[idx] < pixels[idx + 1]:
+                hash_val |= 1 << (row * hash_size + col)
+    return hash_val
+
+
+def _hamming_distance(h1, h2):
+    """计算两个哈希值的汉明距离"""
+    return bin(h1 ^ h2).count('1')
+
+
+def _cluster_by_hash(hashes, threshold):
+    """基于 Union-Find 的哈希聚类"""
+    n = len(hashes)
+    parent = list(range(n))
+    rank = [0] * n
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            if rank[ra] < rank[rb]:
+                ra, rb = rb, ra
+            parent[rb] = ra
+            if rank[ra] == rank[rb]:
+                rank[ra] += 1
+
+    # O(n^2) 两两比较 —— 5000 张约 1250 万次比较，纯整数位操作，很快
+    for i in range(n):
+        for j in range(i + 1, n):
+            if _hamming_distance(hashes[i], hashes[j]) <= threshold:
+                union(i, j)
+
+    # 收集聚类结果
+    clusters = {}
+    for i in range(n):
+        root = find(i)
+        clusters.setdefault(root, []).append(i)
+
+    return list(clusters.values())
+
+
+@app.route('/api/media/image-classify', methods=['POST', 'OPTIONS'])
+def image_classify():
+    """基于感知哈希 (dHash) 的图片/视频画面分类"""
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    data = request.json
+    folder_path = data.get('folder_path', '')
+    output_dir = data.get('output_dir', '')
+    threshold = int(data.get('threshold', 10))  # 汉明距离阈值，越小越严格
+    action = data.get('action', 'copy')  # copy 或 move
+    min_group_size = int(data.get('min_group_size', 1))  # 最小分组数量
+
+    if not folder_path or not os.path.isdir(folder_path):
+        return jsonify({"error": "文件夹不存在"}), 400
+
+    IMAGE_EXTS = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp', '.gif'}
+    VIDEO_EXTS = {'.mp4', '.mov', '.mkv', '.avi', '.wmv', '.flv', '.webm', '.m4v',
+                  '.mpg', '.mpeg', '.3gp', '.ts', '.mts', '.m2ts', '.vob'}
+    ALL_EXTS = IMAGE_EXTS | VIDEO_EXTS
+
+    try:
+        from PIL import Image
+
+        # 1. 扫描文件
+        all_files = []
+        for root, dirs, files in os.walk(folder_path):
+            # 跳过输出目录和隐藏目录
+            dirs[:] = [d for d in dirs if not d.startswith('.') and not d.startswith('_classified')]
+            for fname in sorted(files):
+                if fname.startswith('.'):
+                    continue
+                ext = os.path.splitext(fname)[1].lower()
+                if ext in ALL_EXTS:
+                    all_files.append({
+                        'path': os.path.join(root, fname),
+                        'name': fname,
+                        'ext': ext,
+                        'is_video': ext in VIDEO_EXTS
+                    })
+
+        if not all_files:
+            return jsonify({"error": "未找到任何图片或视频文件"}), 400
+
+        total = len(all_files)
+        print(f"[画面分类] 扫描到 {total} 个文件，阈值={threshold}")
+
+        # 2. 计算哈希
+        hashes = []
+        hash_errors = []
+        temp_frames = []  # 临时提取的视频帧，用完后清理
+
+        for i, finfo in enumerate(all_files):
+            try:
+                if finfo['is_video']:
+                    # 视频：用 FFmpeg 提取首帧到临时文件
+                    fd, temp_path = tempfile.mkstemp(suffix='.jpg')
+                    os.close(fd)
+                    temp_frames.append(temp_path)
+
+                    cmd = ['ffmpeg', '-y', '-ss', '0', '-i', finfo['path'],
+                           '-frames:v', '1', '-q:v', '2', temp_path]
+                    subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+
+                    h = _compute_dhash(temp_path)
+                else:
+                    # 图片：直接计算
+                    h = _compute_dhash(finfo['path'])
+
+                hashes.append(h)
+
+            except Exception as e:
+                # 哈希失败的文件用 -1 标记，后续单独归组
+                hashes.append(-1)
+                hash_errors.append(finfo['name'])
+                if len(hash_errors) <= 10:
+                    print(f"[画面分类] 哈希失败: {finfo['name']} - {str(e)[:100]}")
+
+            if (i + 1) % 200 == 0:
+                print(f"[画面分类] 哈希计算进度: {i+1}/{total}")
+
+        # 清理临时文件
+        for tmp in temp_frames:
+            try:
+                os.remove(tmp)
+            except:
+                pass
+
+        print(f"[画面分类] 哈希计算完成，失败={len(hash_errors)}")
+
+        # 3. 聚类（排除哈希失败的文件）
+        valid_indices = [i for i, h in enumerate(hashes) if h != -1]
+        valid_hashes = [hashes[i] for i in valid_indices]
+
+        print(f"[画面分类] 开始聚类 {len(valid_hashes)} 个有效哈希...")
+        clusters_raw = _cluster_by_hash(valid_hashes, threshold)
+
+        # 映射回原始索引
+        clusters = []
+        for c in clusters_raw:
+            original_indices = [valid_indices[idx] for idx in c]
+            clusters.append(original_indices)
+
+        # 哈希失败的文件各自独立一组
+        for i, h in enumerate(hashes):
+            if h == -1:
+                clusters.append([i])
+
+        # 按组大小降序排列
+        clusters.sort(key=lambda c: len(c), reverse=True)
+
+        print(f"[画面分类] 聚类完成，共 {len(clusters)} 组")
+
+        # 4. 输出分组文件夹
+        if not output_dir:
+            output_dir = os.path.join(folder_path, '_classified')
+        os.makedirs(output_dir, exist_ok=True)
+
+        group_results = []
+        files_moved = 0
+
+        for gidx, cluster in enumerate(clusters):
+            group_size = len(cluster)
+
+            # 过滤太小的分组
+            if group_size < min_group_size:
+                # 小组放到 _others 文件夹
+                group_dir = os.path.join(output_dir, '_others')
+            else:
+                group_dir = os.path.join(output_dir, f"group_{gidx+1:04d}_{group_size}张")
+
+            os.makedirs(group_dir, exist_ok=True)
+
+            group_files = []
+            for idx in cluster:
+                src = all_files[idx]['path']
+                dst = os.path.join(group_dir, all_files[idx]['name'])
+
+                # 避免源和目标相同
+                if os.path.abspath(src) == os.path.abspath(dst):
+                    continue
+
+                # 处理同名文件
+                if os.path.exists(dst):
+                    base, ext = os.path.splitext(all_files[idx]['name'])
+                    dst = os.path.join(group_dir, f"{base}_{idx}{ext}")
+
+                try:
+                    if action == 'move':
+                        shutil.move(src, dst)
+                    else:
+                        shutil.copy2(src, dst)
+                    files_moved += 1
+                except Exception as e:
+                    print(f"[画面分类] {action}失败: {all_files[idx]['name']} - {e}")
+
+                group_files.append(all_files[idx]['name'])
+
+            if group_size >= min_group_size:
+                group_results.append({
+                    "group": gidx + 1,
+                    "count": group_size,
+                    "folder": os.path.basename(group_dir),
+                    "sample_files": group_files[:5]  # 前 5 个作为样本
+                })
+
+        # 统计
+        large_groups = [g for g in group_results if g['count'] >= 2]
+        single_count = sum(1 for c in clusters if len(c) == 1)
+
+        summary = {
+            "message": f"分类完成: {total} 个文件 → {len(group_results)} 个分组",
+            "output_dir": output_dir,
+            "total_files": total,
+            "total_groups": len(group_results),
+            "large_groups": len(large_groups),
+            "single_files": single_count,
+            "files_processed": files_moved,
+            "hash_errors": len(hash_errors),
+            "threshold": threshold,
+            "groups": group_results[:100]  # 最多返回前 100 组
+        }
+
+        print(f"[画面分类] 完成! {total} 文件 → {len(group_results)} 组 ({len(large_groups)} 个多文件组, {single_count} 个独立文件)")
+
+        return jsonify(summary)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": f"画面分类失败: {str(e)}"}), 500
+
 
 if __name__ == '__main__':
     print("Starting Python backend server on port 5001...")

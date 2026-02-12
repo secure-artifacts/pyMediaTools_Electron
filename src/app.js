@@ -2901,6 +2901,18 @@ async function startMediaConvert() {
     const activeSubtab = document.querySelector('#media-panel .subtab-content.active');
     const subtabId = activeSubtab?.id || '';
 
+    // 批量截图有自己的独立处理函数
+    if (subtabId === 'media-thumbnail-subtab') {
+        startBatchThumbnail();
+        return;
+    }
+
+    // 画面分类有自己的独立处理函数
+    if (subtabId === 'media-classify-subtab') {
+        startImageClassify();
+        return;
+    }
+
     let payload = {
         files: uploadedPaths,
         output_dir: outputPath
@@ -6317,4 +6329,410 @@ document.addEventListener('keydown', (e) => {
         }
     }
 });
+
+
+// ==================== 批量视频截图功能 ====================
+
+let thumbnailPollingTimer = null;
+
+async function selectThumbnailFolder() {
+    try {
+        const dir = await window.electronAPI.selectDirectory();
+        if (dir) {
+            document.getElementById('thumbnail-folder-path').value = dir;
+            // 默认输出目录设为 _thumbnails 子目录
+            if (!document.getElementById('thumbnail-output-path').value) {
+                document.getElementById('thumbnail-output-path').value = dir + '/_thumbnails';
+            }
+        }
+    } catch (error) {
+        // 浏览器环境下手动输入
+        console.log('请手动输入文件夹路径');
+    }
+}
+
+async function selectThumbnailOutputDir() {
+    try {
+        const dir = await window.electronAPI.selectDirectory();
+        if (dir) {
+            document.getElementById('thumbnail-output-path').value = dir;
+        }
+    } catch (error) {
+        console.log('请手动输入输出目录路径');
+    }
+}
+
+async function startBatchThumbnail() {
+    const folderPath = document.getElementById('thumbnail-folder-path').value.trim();
+    if (!folderPath) {
+        showToast('请先选择视频文件夹', 'error');
+        return;
+    }
+
+    const outputDir = document.getElementById('thumbnail-output-path').value.trim();
+    const format = document.getElementById('thumbnail-format').value;
+    const quality = parseInt(document.getElementById('thumbnail-quality').value);
+
+    const statusEl = document.getElementById('thumbnail-status');
+    const startBtn = document.getElementById('thumbnail-start-btn');
+    const progressSection = document.getElementById('thumbnail-progress-section');
+    const progressText = document.getElementById('thumbnail-progress-text');
+    const progressBar = document.querySelector('#thumbnail-progress-bar .progress-bar-inner');
+    const resultSection = document.getElementById('thumbnail-result-section');
+
+    // 重置 UI
+    statusEl.textContent = '处理中...';
+    startBtn.disabled = true;
+    progressSection.classList.remove('hidden');
+    resultSection.classList.add('hidden');
+    progressBar.style.width = '0%';
+    progressText.textContent = '正在扫描视频文件...';
+
+    // 启动进度轮询
+    thumbnailPollingTimer = setInterval(async () => {
+        try {
+            const resp = await fetch(`${API_BASE}/media/batch-thumbnail-progress`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    folder_path: folderPath,
+                    output_dir: outputDir || ''
+                })
+            });
+            const progress = await resp.json();
+            if (progress.total > 0) {
+                progressBar.style.width = progress.percent + '%';
+                progressText.textContent = `已完成 ${progress.done}/${progress.total} (${progress.percent}%)`;
+            }
+        } catch (e) {
+            // 忽略轮询错误
+        }
+    }, 2000);
+
+    try {
+        const response = await fetch(`${API_BASE}/media/batch-thumbnail`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                folder_path: folderPath,
+                output_dir: outputDir,
+                format: format,
+                quality: quality
+            })
+        });
+
+        const result = await response.json();
+
+        // 停止轮询
+        if (thumbnailPollingTimer) {
+            clearInterval(thumbnailPollingTimer);
+            thumbnailPollingTimer = null;
+        }
+
+        if (response.ok) {
+            progressBar.style.width = '100%';
+            progressText.textContent = '完成!';
+            statusEl.textContent = `✅ 完成: ${result.success} 成功, ${result.failed} 失败`;
+            showToast(result.message, 'success', 8000);
+
+            // 显示结果
+            displayThumbnailResults(result);
+        } else {
+            statusEl.textContent = '❌ 失败';
+            progressText.textContent = '处理失败';
+            showToast('错误: ' + (result.error || '未知错误'), 'error');
+        }
+    } catch (error) {
+        if (thumbnailPollingTimer) {
+            clearInterval(thumbnailPollingTimer);
+            thumbnailPollingTimer = null;
+        }
+        statusEl.textContent = '❌ 请求失败';
+        progressText.textContent = '请求失败';
+        showToast('请求失败: ' + error.message, 'error');
+    } finally {
+        startBtn.disabled = false;
+    }
+}
+
+function displayThumbnailResults(result) {
+    const resultSection = document.getElementById('thumbnail-result-section');
+    const summaryEl = document.getElementById('thumbnail-result-summary');
+    const errorsEl = document.getElementById('thumbnail-result-errors');
+
+    resultSection.classList.remove('hidden');
+
+    // 汇总信息
+    const escapedDir = result.output_dir.replace(/'/g, "\\'");
+    summaryEl.innerHTML = `
+        <div style="display: flex; gap: 24px; flex-wrap: wrap; align-items: center;">
+            <div style="display: flex; flex-direction: column; align-items: center;">
+                <span style="font-size: 24px; font-weight: 600; color: var(--accent);">${result.total}</span>
+                <span style="font-size: 12px; color: var(--text-muted);">总计</span>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center;">
+                <span style="font-size: 24px; font-weight: 600; color: #51cf66;">${result.success}</span>
+                <span style="font-size: 12px; color: var(--text-muted);">成功</span>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center;">
+                <span style="font-size: 24px; font-weight: 600; color: ${result.failed > 0 ? '#ff6b6b' : 'var(--text-muted)'};">${result.failed}</span>
+                <span style="font-size: 12px; color: var(--text-muted);">失败</span>
+            </div>
+            <div style="flex: 1; text-align: right;">
+                <span style="font-size: 12px; color: var(--text-muted);">输出目录:</span>
+                <a href="#" onclick="openFolderPath('${escapedDir}'); return false;"
+                   style="font-size: 12px; color: var(--accent); text-decoration: none; word-break: break-all;">
+                    ${result.output_dir}
+                </a>
+            </div>
+        </div>
+    `;
+
+    // 显示错误列表
+    errorsEl.innerHTML = '';
+    if (result.results) {
+        const errors = result.results.filter(r => r.status === 'error' || r.status === 'timeout');
+        if (errors.length > 0) {
+            const errorTitle = document.createElement('h5');
+            errorTitle.style.cssText = 'color: #ff6b6b; margin-bottom: 8px;';
+            errorTitle.textContent = `⚠️ 失败文件 (${errors.length}):`;
+            errorsEl.appendChild(errorTitle);
+
+            errors.forEach(err => {
+                const item = document.createElement('div');
+                item.style.cssText = 'padding: 4px 8px; font-size: 12px; color: var(--text-secondary); border-bottom: 1px solid rgba(255,255,255,0.05);';
+                item.textContent = `${err.file} — ${err.status === 'timeout' ? '超时' : (err.error || '未知错误')}`;
+                errorsEl.appendChild(item);
+            });
+        }
+    }
+}
+
+async function openThumbnailOutputDir() {
+    const folderPath = document.getElementById('thumbnail-folder-path').value.trim();
+    const outputDir = document.getElementById('thumbnail-output-path').value.trim() || (folderPath ? folderPath + '/_thumbnails' : '');
+
+    if (!outputDir) {
+        showToast('请先设置视频文件夹或输出目录', 'error');
+        return;
+    }
+
+    try {
+        await fetch(`${API_BASE}/file/open-folder`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: outputDir })
+        });
+    } catch (error) {
+        showToast('打开目录失败', 'error');
+    }
+}
+
+async function openFolderPath(folderPath) {
+    try {
+        await fetch(`${API_BASE}/file/open-folder`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: folderPath })
+        });
+    } catch (error) {
+        showToast('打开目录失败', 'error');
+    }
+}
+
+
+// ==================== 画面分类功能（感知哈希聚类） ====================
+
+async function selectClassifyFolder() {
+    try {
+        const dir = await window.electronAPI.selectDirectory();
+        if (dir) {
+            document.getElementById('classify-folder-path').value = dir;
+            if (!document.getElementById('classify-output-path').value) {
+                document.getElementById('classify-output-path').value = dir + '/_classified';
+            }
+        }
+    } catch (error) {
+        console.log('请手动输入文件夹路径');
+    }
+}
+
+async function selectClassifyOutputDir() {
+    try {
+        const dir = await window.electronAPI.selectDirectory();
+        if (dir) {
+            document.getElementById('classify-output-path').value = dir;
+        }
+    } catch (error) {
+        console.log('请手动输入输出目录路径');
+    }
+}
+
+async function startImageClassify() {
+    const folderPath = document.getElementById('classify-folder-path').value.trim();
+    if (!folderPath) {
+        showToast('请先选择文件夹', 'error');
+        return;
+    }
+
+    const outputDir = document.getElementById('classify-output-path').value.trim();
+    const threshold = parseInt(document.getElementById('classify-threshold').value);
+    const action = document.getElementById('classify-action').value;
+    const minGroupSize = parseInt(document.getElementById('classify-min-group').value) || 2;
+
+    const statusEl = document.getElementById('classify-status');
+    const startBtn = document.getElementById('classify-start-btn');
+    const progressSection = document.getElementById('classify-progress-section');
+    const progressText = document.getElementById('classify-progress-text');
+    const progressBar = document.querySelector('#classify-progress-bar .progress-bar-inner');
+    const resultSection = document.getElementById('classify-result-section');
+
+    // 重置 UI
+    statusEl.textContent = '处理中...';
+    startBtn.disabled = true;
+    progressSection.classList.remove('hidden');
+    resultSection.classList.add('hidden');
+    progressBar.style.width = '0%';
+    progressText.textContent = '正在扫描文件并计算哈希...（大量文件时可能需要几分钟）';
+
+    // 不定进度动画
+    let progressAnim = 0;
+    const animTimer = setInterval(() => {
+        progressAnim = (progressAnim + 2) % 90;
+        progressBar.style.width = (10 + progressAnim) + '%';
+    }, 500);
+
+    try {
+        const response = await fetch(`${API_BASE}/media/image-classify`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                folder_path: folderPath,
+                output_dir: outputDir,
+                threshold: threshold,
+                action: action,
+                min_group_size: minGroupSize
+            })
+        });
+
+        clearInterval(animTimer);
+        const result = await response.json();
+
+        if (response.ok) {
+            progressBar.style.width = '100%';
+            progressText.textContent = '完成!';
+            statusEl.textContent = `✅ ${result.message}`;
+            showToast(result.message, 'success', 8000);
+
+            displayClassifyResults(result);
+        } else {
+            statusEl.textContent = '❌ 失败';
+            progressText.textContent = '处理失败';
+            showToast('错误: ' + (result.error || '未知错误'), 'error');
+        }
+    } catch (error) {
+        clearInterval(animTimer);
+        statusEl.textContent = '❌ 请求失败';
+        progressText.textContent = '请求失败';
+        showToast('请求失败: ' + error.message, 'error');
+    } finally {
+        startBtn.disabled = false;
+    }
+}
+
+function displayClassifyResults(result) {
+    const resultSection = document.getElementById('classify-result-section');
+    const summaryEl = document.getElementById('classify-result-summary');
+    const groupsEl = document.getElementById('classify-result-groups');
+
+    resultSection.classList.remove('hidden');
+
+    const escapedDir = result.output_dir.replace(/'/g, "\\'");
+    summaryEl.innerHTML = `
+        <div style="display: flex; gap: 20px; flex-wrap: wrap; align-items: center;">
+            <div style="display: flex; flex-direction: column; align-items: center;">
+                <span style="font-size: 24px; font-weight: 600; color: var(--accent);">${result.total_files}</span>
+                <span style="font-size: 11px; color: var(--text-muted);">总文件</span>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center;">
+                <span style="font-size: 24px; font-weight: 600; color: #51cf66;">${result.total_groups}</span>
+                <span style="font-size: 11px; color: var(--text-muted);">分组数</span>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center;">
+                <span style="font-size: 24px; font-weight: 600; color: #ffd43b;">${result.large_groups}</span>
+                <span style="font-size: 11px; color: var(--text-muted);">多文件组</span>
+            </div>
+            <div style="display: flex; flex-direction: column; align-items: center;">
+                <span style="font-size: 24px; font-weight: 600; color: var(--text-muted);">${result.single_files}</span>
+                <span style="font-size: 11px; color: var(--text-muted);">独立文件</span>
+            </div>
+            ${result.hash_errors > 0 ? `
+            <div style="display: flex; flex-direction: column; align-items: center;">
+                <span style="font-size: 24px; font-weight: 600; color: #ff6b6b;">${result.hash_errors}</span>
+                <span style="font-size: 11px; color: var(--text-muted);">哈希失败</span>
+            </div>` : ''}
+            <div style="flex: 1; text-align: right;">
+                <span style="font-size: 12px; color: var(--text-muted);">阈值: ${result.threshold} | 输出:</span>
+                <a href="#" onclick="openFolderPath('${escapedDir}'); return false;"
+                   style="font-size: 12px; color: var(--accent); text-decoration: none; word-break: break-all;">
+                    ${result.output_dir}
+                </a>
+            </div>
+        </div>
+    `;
+
+    // 显示分组列表
+    groupsEl.innerHTML = '';
+    if (result.groups && result.groups.length > 0) {
+        result.groups.forEach(group => {
+            const card = document.createElement('div');
+            card.style.cssText = 'padding: 10px 14px; margin-bottom: 6px; background: rgba(255,255,255,0.03); border-radius: 6px; border-left: 3px solid ' +
+                (group.count >= 10 ? '#ff6b6b' : group.count >= 5 ? '#ffd43b' : '#51cf66') + ';';
+
+            const header = document.createElement('div');
+            header.style.cssText = 'display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;';
+            header.innerHTML = `
+                <span style="font-weight: 500; color: var(--text-primary);">📁 ${group.folder}</span>
+                <span style="font-size: 12px; color: var(--text-muted); background: rgba(255,255,255,0.08); padding: 2px 8px; border-radius: 10px;">${group.count} 个文件</span>
+            `;
+            card.appendChild(header);
+
+            if (group.sample_files && group.sample_files.length > 0) {
+                const samples = document.createElement('div');
+                samples.style.cssText = 'font-size: 11px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+                samples.textContent = group.sample_files.join(', ') + (group.count > 5 ? ' ...' : '');
+                card.appendChild(samples);
+            }
+
+            groupsEl.appendChild(card);
+        });
+
+        if (result.groups.length >= 100) {
+            const more = document.createElement('div');
+            more.style.cssText = 'text-align: center; padding: 8px; color: var(--text-muted); font-size: 12px;';
+            more.textContent = '（仅显示前 100 组，完整结果请查看输出目录）';
+            groupsEl.appendChild(more);
+        }
+    }
+}
+
+async function openClassifyOutputDir() {
+    const folderPath = document.getElementById('classify-folder-path').value.trim();
+    const outputDir = document.getElementById('classify-output-path').value.trim() || (folderPath ? folderPath + '/_classified' : '');
+
+    if (!outputDir) {
+        showToast('请先设置文件夹或输出目录', 'error');
+        return;
+    }
+
+    try {
+        await fetch(`${API_BASE}/file/open-folder`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: outputDir })
+        });
+    } catch (error) {
+        showToast('打开目录失败', 'error');
+    }
+}
 

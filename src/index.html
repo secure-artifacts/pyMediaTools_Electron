@@ -295,6 +295,8 @@
             <button class="sub-tab" data-subtab="media-watermark">✏️ 文字水印</button>
             <button class="sub-tab" data-subtab="media-format">🔧 格式转换</button>
             <button class="sub-tab" data-subtab="media-scene">✂️ 场景检测</button>
+            <button class="sub-tab" data-subtab="media-thumbnail">📸 批量截图</button>
+            <button class="sub-tab" data-subtab="media-classify">🔍 画面分类</button>
           </div>
 
           <!-- ========== Logo 叠加模块 ========== -->
@@ -824,6 +826,183 @@
                   <div class="progress-bar-inner" style="width: 0%;"></div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <!-- ========== 批量截图模块 ========== -->
+          <div id="media-thumbnail-subtab" class="subtab-content">
+            <!-- 文件夹选择 -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📁 选择视频文件夹（支持子文件夹递归扫描）</h4>
+              <div class="file-input-group">
+                <input type="text" id="thumbnail-folder-path" class="input file-path"
+                  placeholder="选择包含视频文件的文件夹（支持 5000+ 视频批量处理）">
+                <button class="btn btn-secondary" onclick="selectThumbnailFolder()">选择文件夹</button>
+              </div>
+              <p class="hint" style="margin-top: 8px;">
+                支持格式: MP4, MOV, MKV, AVI, WMV, FLV, WebM, M4V, MPG, MPEG, 3GP, TS 等。会自动递归扫描子文件夹。
+              </p>
+            </div>
+
+            <!-- 输出目录 -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📤 输出目录（可选）</h4>
+              <div class="file-input-group">
+                <input type="text" id="thumbnail-output-path" class="input file-path"
+                  placeholder="默认在视频文件夹下创建 _thumbnails 子目录">
+                <button class="btn btn-secondary" onclick="selectThumbnailOutputDir()">选择目录</button>
+              </div>
+            </div>
+
+            <!-- 参数设置 -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">⚙️ 截图参数</h4>
+              <div class="param-row" style="flex-wrap: wrap; gap: 12px;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>图片格式:</label>
+                  <select id="thumbnail-format" class="select" style="width: 100px;">
+                    <option value="jpg" selected>JPG</option>
+                    <option value="png">PNG</option>
+                  </select>
+                </div>
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label>JPG 质量:</label>
+                  <input type="range" id="thumbnail-quality" min="1" max="10" value="2" style="width: 120px;"
+                    oninput="document.getElementById('thumbnail-quality-label').textContent = this.value <= 3 ? '高' : this.value <= 6 ? '中' : '低'">
+                  <span id="thumbnail-quality-label"
+                    style="font-size: 12px; color: var(--text-muted); min-width: 20px;">高</span>
+                  <span style="font-size: 11px; color: var(--text-muted);">（数值越小质量越高）</span>
+                </div>
+              </div>
+              <div class="checkbox-row" style="margin-top: 12px;">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="thumbnail-skip-existing" checked>
+                  <span>跳过已存在的截图（加速重跑）</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="form-section" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+              <button id="thumbnail-start-btn" class="btn btn-primary" onclick="startBatchThumbnail()"
+                style="min-width: 160px;">
+                📸 开始批量截图
+              </button>
+              <button class="btn btn-secondary" onclick="openThumbnailOutputDir()"
+                style="padding: 6px 12px; font-size: 12px;">
+                📁 打开输出目录
+              </button>
+              <span id="thumbnail-status" class="status-text" style="font-size: 13px;">就绪</span>
+            </div>
+
+            <!-- 进度条 -->
+            <div id="thumbnail-progress-section" class="form-section hidden">
+              <div class="status-box">
+                <span id="thumbnail-progress-text" class="status-text">处理中...</span>
+                <div id="thumbnail-progress-bar" class="progress-bar">
+                  <div class="progress-bar-inner" style="width: 0%; transition: width 0.3s;"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 结果展示 -->
+            <div id="thumbnail-result-section" class="form-section hidden">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📊 处理结果</h4>
+              <div id="thumbnail-result-summary"
+                style="padding: 12px; background: var(--bg-tertiary); border-radius: 8px; margin-bottom: 12px;"></div>
+              <div id="thumbnail-result-errors" style="max-height: 200px; overflow-y: auto;"></div>
+            </div>
+          </div>
+
+          <!-- ========== 画面分类模块 ========== -->
+          <div id="media-classify-subtab" class="subtab-content">
+            <!-- 文件夹选择 -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📁 选择图片/视频文件夹</h4>
+              <div class="file-input-group">
+                <input type="text" id="classify-folder-path" class="input file-path"
+                  placeholder="选择包含图片或视频的文件夹（自动递归扫描子目录）">
+                <button class="btn btn-secondary" onclick="selectClassifyFolder()">选择文件夹</button>
+              </div>
+              <p class="hint" style="margin-top: 8px;">
+                支持图片 (JPG/PNG/BMP/WebP/GIF) 和视频 (MP4/MOV/MKV/AVI 等)。视频将自动提取首帧进行分析。
+              </p>
+            </div>
+
+            <!-- 输出目录 -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📤 输出目录（可选）</h4>
+              <div class="file-input-group">
+                <input type="text" id="classify-output-path" class="input file-path"
+                  placeholder="默认在源文件夹下创建 _classified 子目录">
+                <button class="btn btn-secondary" onclick="selectClassifyOutputDir()">选择目录</button>
+              </div>
+            </div>
+
+            <!-- 参数设置 -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">⚙️ 分类参数</h4>
+              <div style="display: flex; flex-direction: column; gap: 14px;">
+                <!-- 相似度阈值 -->
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <label style="min-width: 90px;">相似度阈值:</label>
+                  <input type="range" id="classify-threshold" min="1" max="25" value="10" style="width: 180px;"
+                    oninput="document.getElementById('classify-threshold-label').textContent = this.value + ' (' + (this.value <= 5 ? '非常严格' : this.value <= 10 ? '标准' : this.value <= 18 ? '宽松' : '非常宽松') + ')'">
+                  <span id="classify-threshold-label"
+                    style="font-size: 12px; color: var(--text-muted); min-width: 100px;">10 (标准)</span>
+                </div>
+                <p class="hint" style="margin-top: -8px; font-size: 11px;">汉明距离阈值：值越小分类越严格（画面需极其相似才归为一组），值越大越宽松。建议 8-12。
+                </p>
+
+                <!-- 操作模式 -->
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label style="min-width: 90px;">文件操作:</label>
+                  <select id="classify-action" class="select" style="width: 120px;">
+                    <option value="copy" selected>复制文件</option>
+                    <option value="move">移动文件</option>
+                  </select>
+                  <span style="font-size: 11px; color: var(--text-muted);">「复制」保留原文件，「移动」节省磁盘空间</span>
+                </div>
+
+                <!-- 最小分组大小 -->
+                <div style="display: flex; align-items: center; gap: 8px;">
+                  <label style="min-width: 90px;">最小分组:</label>
+                  <input type="number" id="classify-min-group" class="input" value="2" min="1" max="100"
+                    style="width: 80px;">
+                  <span style="font-size: 11px; color: var(--text-muted);">少于此数量的文件归入 _others 文件夹</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="form-section" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+              <button id="classify-start-btn" class="btn btn-primary" onclick="startImageClassify()"
+                style="min-width: 160px;">
+                🔍 开始画面分类
+              </button>
+              <button class="btn btn-secondary" onclick="openClassifyOutputDir()"
+                style="padding: 6px 12px; font-size: 12px;">
+                📁 打开输出目录
+              </button>
+              <span id="classify-status" class="status-text" style="font-size: 13px;">就绪</span>
+            </div>
+
+            <!-- 进度 -->
+            <div id="classify-progress-section" class="form-section hidden">
+              <div class="status-box">
+                <span id="classify-progress-text" class="status-text">处理中...</span>
+                <div id="classify-progress-bar" class="progress-bar">
+                  <div class="progress-bar-inner" style="width: 0%; transition: width 0.3s;"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 结果展示 -->
+            <div id="classify-result-section" class="form-section hidden">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📊 分类结果</h4>
+              <div id="classify-result-summary"
+                style="padding: 12px; background: var(--bg-tertiary); border-radius: 8px; margin-bottom: 12px;"></div>
+              <div id="classify-result-groups" style="max-height: 400px; overflow-y: auto;"></div>
             </div>
           </div>
 

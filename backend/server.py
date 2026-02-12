@@ -3900,5 +3900,26 @@ def image_classify():
 
 
 if __name__ == '__main__':
-    print("Starting Python backend server on port 5001...")
-    app.run(host='127.0.0.1', port=5001, debug=False, threaded=True)
+    port = 5001
+    try:
+        from waitress import serve
+        print(f"Starting Python backend with Waitress on port {port}...")
+        print(f"  Threads: 6 | Channel timeout: 120s | Recv timeout: 30s")
+        serve(
+            app,
+            host='127.0.0.1',
+            port=port,
+            threads=6,                    # 6 个 worker 线程（比 Flask 单线程可靠得多）
+            channel_timeout=120,          # 单个连接最长存活 120 秒
+            recv_timeout=30,              # 接收请求数据超时 30 秒
+            send_timeout=60,              # 发送响应数据超时 60 秒
+            connection_limit=100,         # 最大并发连接数
+            cleanup_interval=30,          # 每 30 秒清理空闲连接
+            map_size=100000,              # asyncore map 大小
+            url_scheme='http',
+            expose_tracebacks=True,       # 开发阶段显示错误详情
+        )
+    except ImportError:
+        print(f"[警告] Waitress 未安装，使用 Flask 开发服务器 (稳定性较差)")
+        print(f"  建议运行: pip install waitress")
+        app.run(host='127.0.0.1', port=port, debug=False, threaded=True)

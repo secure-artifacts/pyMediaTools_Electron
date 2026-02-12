@@ -11,6 +11,10 @@ let powerSaveId = null;
 let isQuitting = false;
 let backendStartAttempts = 0;
 const MAX_BACKEND_ATTEMPTS = 5;
+let watchdogInterval = null;
+let watchdogFailCount = 0;
+const WATCHDOG_INTERVAL = 15000;  // 每15秒检查一次
+const WATCHDOG_MAX_FAILS = 3;     // 连续3次失败(45秒)后强制重启
 
 // 日志文件路径
 const logDir = app.isPackaged
@@ -328,6 +332,7 @@ async function startPythonBackend() {
         if (isHealthy) {
             log('Backend started successfully!');
             backendStartAttempts = 0; // 重置计数器
+            startWatchdog(); // 启动看门狗
         } else if (pythonProcess && !pythonProcess.killed) {
             log('Backend not responding, process still running...');
         }
@@ -424,6 +429,51 @@ app.whenReady().then(async () => {
     setTimeout(() => createWindow(), 1000);
 });
 
+// ========== 后端看门狗 ==========
+// 独立于前端心跳，在 Electron 主进程层面监控后端
+// 如果后端连续 45 秒无法响应 health 检查，强制杀掉并重启
+function startWatchdog() {
+    stopWatchdog(); // 先清理旧的
+    watchdogFailCount = 0;
+    log(`[Watchdog] Started (check every ${WATCHDOG_INTERVAL / 1000}s, restart after ${WATCHDOG_MAX_FAILS} fails)`);
+
+    watchdogInterval = setInterval(async () => {
+        if (isQuitting) return;
+
+        const isHealthy = await checkBackendHealth();
+        if (isHealthy) {
+            if (watchdogFailCount > 0) {
+                log(`[Watchdog] Backend recovered after ${watchdogFailCount} failed checks`);
+            }
+            watchdogFailCount = 0;
+        } else {
+            watchdogFailCount++;
+            log(`[Watchdog] Health check failed (${watchdogFailCount}/${WATCHDOG_MAX_FAILS})`);
+
+            if (watchdogFailCount >= WATCHDOG_MAX_FAILS) {
+                log(`[Watchdog] Backend unresponsive for ${WATCHDOG_MAX_FAILS * WATCHDOG_INTERVAL / 1000}s, force restarting...`);
+                watchdogFailCount = 0;
+                stopWatchdog(); // 暂停看门狗，等重启完成后再启动
+
+                // 强制杀掉当前进程
+                killPythonProcess();
+                await killExistingBackend();
+
+                // 重启（重置计数器，给足够的重试机会）
+                backendStartAttempts = 0;
+                await startPythonBackend();
+            }
+        }
+    }, WATCHDOG_INTERVAL);
+}
+
+function stopWatchdog() {
+    if (watchdogInterval) {
+        clearInterval(watchdogInterval);
+        watchdogInterval = null;
+    }
+}
+
 app.on('window-all-closed', () => {
     isQuitting = true;
     killPythonProcess();
@@ -438,6 +488,7 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
     isQuitting = true;
+    stopWatchdog();
     killPythonProcess();
 });
 

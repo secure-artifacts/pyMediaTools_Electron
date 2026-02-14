@@ -1,6 +1,98 @@
-// API 基础 URL
-const API_BASE = 'http://127.0.0.1:5001/api';
-const API_ORIGIN = API_BASE.replace(/\/api$/, '');
+// ==================== IPC API 兼容层 ====================
+// 替代原来的 HTTP fetch → Python Flask 调用
+// 通过 Electron IPC 直接调用 Node.js 后端
+
+/**
+ * apiFetch: fetch() 的 IPC 替代
+ * 返回一个类 Response 对象 { ok, status, json(), text() }
+ * 用法完全兼容: const response = await apiFetch('elevenlabs/voices', { method: 'GET' })
+ */
+async function apiFetch(url, options = {}) {
+    // 从 URL 中提取 endpoint
+    let endpoint = url;
+    if (url.includes('/api/')) {
+        endpoint = url.split('/api/')[1];
+    }
+    // 去除查询参数
+    const queryIdx = endpoint.indexOf('?');
+    let queryParams = {};
+    if (queryIdx !== -1) {
+        const queryStr = endpoint.slice(queryIdx + 1);
+        endpoint = endpoint.slice(0, queryIdx);
+        queryStr.split('&').forEach(p => {
+            const [k, v] = p.split('=');
+            if (k) queryParams[decodeURIComponent(k)] = decodeURIComponent(v || '');
+        });
+    }
+
+    // 解析请求数据
+    let data = {};
+    const method = (options.method || 'GET').toUpperCase();
+
+    if (options.body) {
+        if (typeof options.body === 'string') {
+            try { data = JSON.parse(options.body); } catch { data = { _raw: options.body }; }
+        } else if (options.body instanceof FormData) {
+            // FormData → 需要走文件上传通道
+            return await handleFormDataUpload(endpoint, options.body);
+        }
+    }
+
+    // 将 GET 方法标记传入数据中
+    if (method === 'GET') {
+        data._method = 'GET';
+    }
+
+    // 合并查询参数
+    Object.assign(data, queryParams);
+
+    // 通过 IPC 调用
+    const result = await window.electronAPI.apiCall(endpoint, data);
+
+    // 包装成 Response-like 对象
+    return {
+        ok: result.success,
+        status: result.success ? 200 : 500,
+        json: async () => result.success ? result.data : { error: result.error },
+        text: async () => JSON.stringify(result.success ? result.data : { error: result.error }),
+        clone: function () { return this; },
+    };
+}
+
+/** 处理 FormData 上传 */
+async function handleFormDataUpload(endpoint, formData) {
+    const file = formData.get('audio_file') || formData.get('file');
+    const extraData = {};
+    for (const [key, value] of formData.entries()) {
+        if (key !== 'audio_file' && key !== 'file' && !(value instanceof File)) {
+            extraData[key] = value;
+        }
+    }
+
+    if (file && file instanceof File) {
+        const buffer = await file.arrayBuffer();
+        const result = await window.electronAPI.apiUpload(endpoint, buffer, file.name, extraData);
+        return {
+            ok: result.success,
+            status: result.success ? 200 : 500,
+            json: async () => result.success ? result.data : { error: result.error },
+            text: async () => JSON.stringify(result.success ? result.data : { error: result.error }),
+        };
+    }
+
+    // 没有文件，退回到普通 API 调用
+    const result = await window.electronAPI.apiCall(endpoint, extraData);
+    return {
+        ok: result.success,
+        status: result.success ? 200 : 500,
+        json: async () => result.success ? result.data : { error: result.error },
+        text: async () => JSON.stringify(result.success ? result.data : { error: result.error }),
+    };
+}
+
+// API_BASE 保留为占位符（apiFetch 会自动解析）
+const API_BASE = 'ipc://api';
+const API_ORIGIN = '';
 
 // 当前选中的文件路径
 let currentAudioPath = '';
@@ -97,7 +189,7 @@ function startHeartbeat() {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-            const response = await fetch(`${API_BASE}/health`, {
+            const response = await apiFetch(`${API_BASE}/health`, {
                 signal: controller.signal
             });
             clearTimeout(timeoutId);
@@ -1665,48 +1757,14 @@ const MAX_HEALTH_RETRIES = 20; // 快速重试阶段（约60秒）
 let healthCheckSlowMode = false; // 进入慢速重试模式
 
 async function checkBackendHealth() {
-    try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-        const response = await fetch(`${API_BASE}/health`, {
-            signal: controller.signal
-        });
-        clearTimeout(timeoutId);
-
-        if (response.ok) {
-            const wasDisconnected = !backendReady || healthCheckSlowMode;
-            updateStatus('后端服务已连接', 'success');
-            backendReady = true;
-            healthCheckRetries = 0;
-            healthCheckSlowMode = false;
-            if (!settingsAutoLoaded) {
-                settingsAutoLoaded = true;
-                loadSettings(true);
-            }
-            // 如果之前断开过，显示恢复提示
-            if (wasDisconnected && settingsAutoLoaded) {
-                showToast('✅ 后端服务已恢复连接', 'success', 3000);
-            }
-        }
-    } catch (error) {
-        healthCheckRetries++;
-        backendReady = false;
-
-        if (healthCheckRetries >= MAX_HEALTH_RETRIES && !healthCheckSlowMode) {
-            // 切换到慢速重试模式（不放弃，降频继续尝试）
-            healthCheckSlowMode = true;
-            updateStatus('后端服务暂时无法连接，持续重连中...', 'error');
-            console.warn('后端启动失败，进入慢速重连模式 (每10秒一次)');
-            showToast('后端连接中断，正在后台持续重连...', 'error', 6000);
-            setTimeout(checkBackendHealth, 10000); // 10秒一次
-        } else if (healthCheckSlowMode) {
-            // 慢速重试模式：安静地继续尝试，不刷屏
-            setTimeout(checkBackendHealth, 10000);
-        } else {
-            updateStatus(`等待后端服务启动... (${healthCheckRetries}/${MAX_HEALTH_RETRIES})`, 'error');
-            setTimeout(checkBackendHealth, 3000);
-        }
+    // Node.js 后端在主进程中运行，始终可用
+    updateStatus('后端服务已连接 (Node.js)', 'success');
+    backendReady = true;
+    healthCheckRetries = 0;
+    healthCheckSlowMode = false;
+    if (!settingsAutoLoaded) {
+        settingsAutoLoaded = true;
+        loadSettings(true);
     }
 }
 
@@ -1736,7 +1794,7 @@ function clearText(targetId) {
 // 加载设置
 async function loadSettings(autoLoadVoices = false) {
     try {
-        const response = await fetch(`${API_BASE}/settings/gladia-keys`);
+        const response = await apiFetch(`${API_BASE}/settings/gladia-keys`);
         const data = await response.json();
         if (data.keys) {
             document.getElementById('gladia-keys').value = data.keys.join('\n');
@@ -1747,7 +1805,7 @@ async function loadSettings(autoLoadVoices = false) {
 
     // 加载 ElevenLabs API Keys
     try {
-        const response = await fetch(`${API_BASE}/settings/elevenlabs`);
+        const response = await apiFetch(`${API_BASE}/settings/elevenlabs`);
         const data = await response.json();
         const keyTextarea = document.getElementById('elevenlabs-api-keys');
         if (keyTextarea) {
@@ -1763,7 +1821,7 @@ async function loadSettings(autoLoadVoices = false) {
 
     // 加载替换规则
     try {
-        const response = await fetch(`${API_BASE}/settings/replace-rules`);
+        const response = await apiFetch(`${API_BASE}/settings/replace-rules`);
         const data = await response.json();
         const rulesTextarea = document.getElementById('replace-rules');
         const langSelect = document.getElementById('replace-language');
@@ -2327,7 +2385,7 @@ async function startBatchGeneration() {
         formData.append('seamless_fcpxml', seamless);
 
         try {
-            const response = await fetch(`${API_BASE}/subtitle/generate-with-file`, {
+            const response = await apiFetch(`${API_BASE}/subtitle/generate-with-file`, {
                 method: 'POST',
                 body: formData
             });
@@ -2491,7 +2549,7 @@ function showSubtitleResultsPanel() {
     document.getElementById('download-all-subtitles-btn').onclick = async () => {
         try {
             showToast('正在打包...', 'info');
-            const response = await fetch(`${API_BASE}/subtitle/download-zip`, {
+            const response = await apiFetch(`${API_BASE}/subtitle/download-zip`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ files: allFiles })
@@ -2590,7 +2648,7 @@ async function retrySingleSubtitleTask(index) {
     formData.append('seamless_fcpxml', seamless);
 
     try {
-        const response = await fetch(`${API_BASE}/subtitle/generate-with-file`, {
+        const response = await apiFetch(`${API_BASE}/subtitle/generate-with-file`, {
             method: 'POST',
             body: formData
         });
@@ -2712,7 +2770,7 @@ async function startGeneration() {
         setIndeterminateProgress('progress-bar', true);
         document.getElementById('generate-btn').disabled = true;
 
-        const response = await fetch(`${API_BASE}/subtitle/generate`, {
+        const response = await apiFetch(`${API_BASE}/subtitle/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(requestData)
@@ -2737,7 +2795,7 @@ async function startGeneration() {
 
 async function pollStatus() {
     try {
-        const response = await fetch(`${API_BASE}/status`);
+        const response = await apiFetch(`${API_BASE}/status`);
         const status = await response.json();
 
         if (status.is_processing) {
@@ -2776,7 +2834,7 @@ async function adjustSrt() {
     const ignoreChars = document.getElementById('ignore-chars').value;
 
     try {
-        const response = await fetch(`${API_BASE}/srt/adjust`, {
+        const response = await apiFetch(`${API_BASE}/srt/adjust`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2809,7 +2867,7 @@ async function computeCharTime() {
     }
 
     try {
-        const response = await fetch(`${API_BASE}/srt/compute-char-time`, {
+        const response = await apiFetch(`${API_BASE}/srt/compute-char-time`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2838,7 +2896,7 @@ async function generateSeamlessSrt() {
     }
 
     try {
-        const response = await fetch(`${API_BASE}/srt/seamless`, {
+        const response = await apiFetch(`${API_BASE}/srt/seamless`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -2882,7 +2940,7 @@ async function startMediaConvert() {
             formData.append('file', fileInfo.file);
 
             try {
-                const resp = await fetch(`${API_BASE}/file/upload`, {
+                const resp = await apiFetch(`${API_BASE}/file/upload`, {
                     method: 'POST',
                     body: formData
                 });
@@ -3048,7 +3106,7 @@ async function startMediaConvert() {
         document.getElementById('media-progress').classList.remove('hidden');
         setIndeterminateProgress('media-progress', true);
 
-        const response = await fetch(`${API_BASE}/media/convert`, {
+        const response = await apiFetch(`${API_BASE}/media/convert`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -3134,7 +3192,7 @@ function showConvertedFilesDownload(files, filesInfo) {
         const durationStr = duration ? ` (${formatDuration(duration)})` : '';
 
         const link = document.createElement('a');
-        link.href = `${API_BASE}/file/download?path=${encodeURIComponent(filePath)}`;
+        link.href = `file://${filePath}`;
         link.textContent = `📥 ${displayName}${durationStr}`;
         link.style.cssText = 'color: var(--accent); text-decoration: none; font-size: 13px;';
         link.download = displayName;
@@ -3156,7 +3214,7 @@ async function downloadAllFiles(files) {
     showToast('正在打包 ZIP...', 'info');
 
     try {
-        const response = await fetch(`${API_BASE}/file/download-zip`, {
+        const response = await apiFetch(`${API_BASE}/file/download-zip`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ files })
@@ -3202,7 +3260,7 @@ async function saveElevenLabsKey() {
     const apiKeys = rawKeys.split(/[\s,;]+/).map(k => k.trim()).filter(Boolean);
 
     try {
-        const response = await fetch(`${API_BASE}/settings/elevenlabs`, {
+        const response = await apiFetch(`${API_BASE}/settings/elevenlabs`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ api_keys: apiKeys })
@@ -3222,7 +3280,7 @@ async function loadVoices() {
     updateElevenLabsStatus('连接中...');
 
     try {
-        const response = await fetch(`${API_BASE}/elevenlabs/voices`);
+        const response = await apiFetch(`${API_BASE}/elevenlabs/voices`);
         const data = await response.json();
 
         const select = document.getElementById('voice-select');
@@ -3273,7 +3331,7 @@ async function searchVoices() {
     updateElevenLabsStatus(`搜索 "${searchTerm}"...`);
 
     try {
-        const response = await fetch(`${API_BASE}/elevenlabs/search`, {
+        const response = await apiFetch(`${API_BASE}/elevenlabs/search`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ search_term: searchTerm })
@@ -3460,7 +3518,7 @@ function updateQuotaSummary(quotas) {
 
 async function loadQuota() {
     try {
-        const response = await fetch(`${API_BASE}/elevenlabs/all-quotas`);
+        const response = await apiFetch(`${API_BASE}/elevenlabs/all-quotas`);
         const data = await response.json();
         updateQuotaSummary(data.keys || []);
     } catch (error) {
@@ -3481,8 +3539,8 @@ async function loadAllQuotas() {
     try {
         // 同时获取 key 列表和额度
         const [keysResponse, quotasResponse] = await Promise.all([
-            fetch(`${API_BASE}/settings/elevenlabs/keys`),
-            fetch(`${API_BASE}/elevenlabs/all-quotas`)
+            apiFetch(`${API_BASE}/settings/elevenlabs/keys`),
+            apiFetch(`${API_BASE}/elevenlabs/all-quotas`)
         ]);
 
         const keysData = await keysResponse.json();
@@ -3621,7 +3679,7 @@ async function loadAllQuotas() {
 // 切换 Key 启用/停用
 async function toggleKey(index) {
     try {
-        const response = await fetch(`${API_BASE}/settings/elevenlabs/keys`, {
+        const response = await apiFetch(`${API_BASE}/settings/elevenlabs/keys`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'toggle', index })
@@ -3643,7 +3701,7 @@ async function deleteKey(index) {
     if (!confirm('确定要删除这个 API Key 吗？')) return;
 
     try {
-        const response = await fetch(`${API_BASE}/settings/elevenlabs/keys`, {
+        const response = await apiFetch(`${API_BASE}/settings/elevenlabs/keys`, {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ index })
@@ -3664,7 +3722,7 @@ async function deleteKey(index) {
 // 移动 Key 顺序
 async function moveKey(fromIndex, toIndex) {
     try {
-        const response = await fetch(`${API_BASE}/settings/elevenlabs/keys`, {
+        const response = await apiFetch(`${API_BASE}/settings/elevenlabs/keys`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'move', from: fromIndex, to: toIndex })
@@ -3722,7 +3780,7 @@ async function generateTTS() {
     updateElevenLabsStatus('生成中...');
 
     try {
-        const response = await fetch(`${API_BASE}/elevenlabs/tts`, {
+        const response = await apiFetch(`${API_BASE}/elevenlabs/tts`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -4105,7 +4163,7 @@ async function generateTTSBatch() {
     // 获取启用的 Key 数量用于并行
     let enabledKeyCount = 1;
     try {
-        const keysResponse = await fetch(`${API_BASE}/settings/elevenlabs/keys`);
+        const keysResponse = await apiFetch(`${API_BASE}/settings/elevenlabs/keys`);
         const keysData = await keysResponse.json();
         enabledKeyCount = (keysData.keys || []).filter(k => k.enabled !== false).length || 1;
     } catch (e) {
@@ -4146,7 +4204,7 @@ async function generateTTSBatch() {
 
         try {
             const enableCircuitBreaker = document.getElementById('tts-circuit-breaker')?.checked || false;
-            const response = await fetch(`${API_BASE}/elevenlabs/tts-batch`, {
+            const response = await apiFetch(`${API_BASE}/elevenlabs/tts-batch`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -4257,7 +4315,7 @@ async function generateTTSBatch() {
         for (const r of successResults) {
             const filename = r.file_path.split('/').pop();
             const link = document.createElement('a');
-            link.href = `${API_BASE}/file/download?path=${encodeURIComponent(r.file_path)}`;
+            link.href = `file://${r.file_path}`;
             link.download = filename;
             link.click();
             await new Promise(resolve => setTimeout(resolve, 500));
@@ -4315,7 +4373,7 @@ async function retrySingleBatch(row) {
     }
 
     try {
-        const response = await fetch(`${API_BASE}/elevenlabs/tts-batch`, {
+        const response = await apiFetch(`${API_BASE}/elevenlabs/tts-batch`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -4342,7 +4400,7 @@ async function retrySingleBatch(row) {
             if (r.file_path) {
                 const filename = r.file_path.split('/').pop();
                 const link = document.createElement('a');
-                link.href = `${API_BASE}/file/download?path=${encodeURIComponent(r.file_path)}`;
+                link.href = `file://${r.file_path}`;
                 link.download = filename;
                 link.click();
             }
@@ -4399,7 +4457,7 @@ async function generateSFX() {
     updateElevenLabsStatus('生成音效中...');
 
     try {
-        const response = await fetch(`${API_BASE}/elevenlabs/sfx`, {
+        const response = await apiFetch(`${API_BASE}/elevenlabs/sfx`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -4482,7 +4540,7 @@ async function analyzeVideoUrl() {
     document.getElementById('video-list-section').style.display = 'none';
 
     try {
-        const response = await fetch(`${API_BASE}/video/analyze`, {
+        const response = await apiFetch(`${API_BASE}/video/analyze`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ url })
@@ -4652,7 +4710,7 @@ async function startVideoDownload() {
     try {
         updateStatus('下载中...', 'processing', 'download-status');
 
-        const response = await fetch(`${API_BASE}/video/download-batch`, {
+        const response = await apiFetch(`${API_BASE}/video/download-batch`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -4709,7 +4767,7 @@ async function saveGladiaKeys() {
     const keys = keysText.split('\n').filter(k => k.trim());
 
     try {
-        const response = await fetch(`${API_BASE}/settings/gladia-keys`, {
+        const response = await apiFetch(`${API_BASE}/settings/gladia-keys`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ keys })
@@ -4728,7 +4786,7 @@ async function saveReplaceRules() {
     const rules = document.getElementById('replace-rules').value;
 
     try {
-        const response = await fetch(`${API_BASE}/settings/replace-rules`, {
+        const response = await apiFetch(`${API_BASE}/settings/replace-rules`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ language, rules })
@@ -4963,7 +5021,7 @@ async function analyzeSmartSplit() {
                 formData.append('audio_file', fileInfo.file);
                 formData.append('max_duration', maxDuration.toString());
 
-                const response = await fetch(`${API_BASE}/audio/smart-split-analyze`, {
+                const response = await apiFetch(`${API_BASE}/audio/smart-split-analyze`, {
                     method: 'POST',
                     body: formData
                 });
@@ -5436,7 +5494,7 @@ async function detectSingleFile(idx) {
     const minInterval = parseFloat(document.getElementById('scene-min-interval').value);
 
     try {
-        const response = await fetch(`${API_BASE}/media/scene-detect`, {
+        const response = await apiFetch(`${API_BASE}/media/scene-detect`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -5534,7 +5592,7 @@ async function exportSingleFile(idx) {
     statusEl.textContent = `正在导出 ${file.name} 的 ${selectedSegments.length} 个片段...`;
 
     try {
-        const response = await fetch(`${API_BASE}/media/scene-split`, {
+        const response = await apiFetch(`${API_BASE}/media/scene-split`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -5580,7 +5638,7 @@ async function exportAllScenes() {
         progressEl.querySelector('.progress-bar-inner').style.width = `${((i) / filesToExport.length) * 100}%`;
 
         try {
-            const response = await fetch(`${API_BASE}/media/scene-split`, {
+            const response = await apiFetch(`${API_BASE}/media/scene-split`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -5623,7 +5681,7 @@ async function openSceneOutputDir() {
     }
 
     try {
-        await fetch(`${API_BASE}/open-folder`, {
+        await apiFetch(`${API_BASE}/open-folder`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: dir })
@@ -5673,7 +5731,7 @@ async function openTrimModal(filePath, fileName) {
 
     // 加载视频
     const video = document.getElementById('trim-video-player');
-    const videoUrl = `${API_BASE}/file/proxy?path=${encodeURIComponent(filePath)}`;
+    const videoUrl = `file://${filePath}`;
     video.src = videoUrl;
     video.currentTime = 0;
 
@@ -5738,7 +5796,7 @@ async function loadTrimWaveform(filePath) {
     ctx.fillText('⏳ 加载波形中...', canvas.width / 2, canvas.height / 2);
 
     try {
-        const response = await fetch(`${API_BASE}/media/waveform`, {
+        const response = await apiFetch(`${API_BASE}/media/waveform`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ file_path: filePath, num_peaks: Math.min(600, container.clientWidth) })
@@ -6120,7 +6178,7 @@ async function executeTrim() {
 
     try {
         const outputDir = document.getElementById('media-output-path')?.value || '';
-        const response = await fetch(`${API_BASE}/media/trim`, {
+        const response = await apiFetch(`${API_BASE}/media/trim`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -6410,7 +6468,7 @@ async function startBatchThumbnail() {
     // 启动进度轮询
     thumbnailPollingTimer = setInterval(async () => {
         try {
-            const resp = await fetch(`${API_BASE}/media/batch-thumbnail-progress`, {
+            const resp = await apiFetch(`${API_BASE}/media/batch-thumbnail-progress`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -6429,7 +6487,7 @@ async function startBatchThumbnail() {
     }, 2000);
 
     try {
-        const response = await fetch(`${API_BASE}/media/batch-thumbnail`, {
+        const response = await apiFetch(`${API_BASE}/media/batch-thumbnail`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -6537,7 +6595,7 @@ async function openThumbnailOutputDir() {
     }
 
     try {
-        await fetch(`${API_BASE}/file/open-folder`, {
+        await apiFetch(`${API_BASE}/file/open-folder`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: outputDir })
@@ -6549,7 +6607,7 @@ async function openThumbnailOutputDir() {
 
 async function openFolderPath(folderPath) {
     try {
-        await fetch(`${API_BASE}/file/open-folder`, {
+        await apiFetch(`${API_BASE}/file/open-folder`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: folderPath })
@@ -6622,7 +6680,7 @@ async function startImageClassify() {
     }, 500);
 
     try {
-        const response = await fetch(`${API_BASE}/media/image-classify`, {
+        const response = await apiFetch(`${API_BASE}/media/image-classify`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -6745,7 +6803,7 @@ async function openClassifyOutputDir() {
     }
 
     try {
-        await fetch(`${API_BASE}/file/open-folder`, {
+        await apiFetch(`${API_BASE}/file/open-folder`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: outputDir })

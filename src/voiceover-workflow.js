@@ -9,7 +9,7 @@ async function refreshVWVoices() {
     if (!select) return;
 
     try {
-        const response = await fetch(`${API_BASE}/elevenlabs/voices`);
+        const response = await apiFetch(`${API_BASE}/elevenlabs/voices`);
         const data = await response.json();
 
         if (data.voices && data.voices.length > 0) {
@@ -353,7 +353,7 @@ async function startVoiceoverWorkflow() {
 
             try {
                 const exportFcpxml = document.getElementById('vw-export-fcpxml')?.checked ?? true;
-                const ttsResponse = await fetch(`${API_BASE}/elevenlabs/tts-workflow`, {
+                const ttsResponse = await apiFetch(`${API_BASE}/elevenlabs/tts-workflow`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
@@ -458,7 +458,7 @@ async function vwOpenOutputDir() {
 
     // 调用后端 API 打开文件夹
     try {
-        const response = await fetch(`${API_BASE}/open-folder`, {
+        const response = await apiFetch(`${API_BASE}/open-folder`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path: outputDir })

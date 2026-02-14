@@ -2416,20 +2416,42 @@ def _build_segments(cut_points):
     return segments
 
 def _get_audio_duration(file_path):
-    """获取音频/视频文件的时长（秒）"""
+    """获取音频/视频文件的时长（秒），多种方法回退"""
+    ffprobe_cmd = os.environ.get('FFPROBE_PATH', 'ffprobe')
+    
+    # 方法1: format=duration
     try:
         result = subprocess.run([
-            'ffprobe', '-v', 'error',
+            ffprobe_cmd, '-v', 'error',
             '-show_entries', 'format=duration',
             '-of', 'default=noprint_wrappers=1:nokey=1',
             file_path
         ], capture_output=True, text=True, check=True, timeout=30)
         dur = float(result.stdout.strip())
-        print(f"[DEBUG] 获取时长: {file_path} -> {dur}s")
-        return dur
+        if dur > 0:
+            print(f"[DEBUG] 获取时长: {file_path} -> {dur}s")
+            return dur
     except Exception as e:
-        print(f"[DEBUG] 获取时长失败: {file_path} -> {e}")
-        return None
+        print(f"[DEBUG] 获取时长方法1失败 (format=duration): {file_path} -> {e}")
+    
+    # 方法2: stream=duration（某些容器格式 format 级别没有 duration）
+    try:
+        result = subprocess.run([
+            ffprobe_cmd, '-v', 'error',
+            '-select_streams', 'v:0',
+            '-show_entries', 'stream=duration',
+            '-of', 'default=noprint_wrappers=1:nokey=1',
+            file_path
+        ], capture_output=True, text=True, check=True, timeout=30)
+        dur = float(result.stdout.strip())
+        if dur > 0:
+            print(f"[DEBUG] 获取时长方法2成功 (stream=duration): {file_path} -> {dur}s")
+            return dur
+    except Exception as e:
+        print(f"[DEBUG] 获取时长方法2失败 (stream=duration): {file_path} -> {e}")
+    
+    print(f"[ERROR] 所有获取时长方法均失败: {file_path}")
+    return None
 
 def _build_black_mp4_cmd(file_path, output_path, start, duration, size="1280x720", fps=24):
     # 获取精确时长

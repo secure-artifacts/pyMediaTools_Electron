@@ -32,7 +32,7 @@
       "enabled": false,
       "manual_disabled": false,
       "auto_disabled": true,
-      "auto_disabled_reason": "API \u9519\u8bef[401][quota_exceeded][-]: This request exceeds your quota of 10000. You have 19 credits remaining, while 441 credits are required for this request."
+      "auto_disabled_reason": "API 错误[401][quota_exceeded][-]: This request exceeds your quota of 10000. You have 19 credits remaining, while 441 credits are required for this request."
     },
     {
       "key": "sk_98bf09862a301115d326d01de1cfc1c90eb56be367ebe1aa",
@@ -40,7 +40,9 @@
     },
     {
       "key": "sk_b68eaabec16f1f5225a17f6b9762bf05c0efa17eb8ff3bfe",
-      "enabled": true
+      "enabled": false,
+      "auto_disabled": true,
+      "auto_disabled_reason": "remaining<200"
     },
     {
       "key": "sk_8a5d73854fc79ddbfa922afa121051c08a214b829127afda",

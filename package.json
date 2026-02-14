@@ -15,7 +15,6 @@
     "build:all": "npm run build && echo '✅ 网站版本已生成到 dist/' && electron-builder && echo '✅ 桌面版本已生成到 dist-electron/'",
     "electron:dev": "concurrently \"npm run dev\" \"wait-on http://localhost:5173 && electron .\"",
     "electron:build": "npm run build && electron-builder",
-    "backend:start": "python3 backend/server.py",
     "start": "npm run electron:dev",
     "pack:mac-arm64": "npm run build && electron-builder --mac --arm64",
     "pack:mac-x64": "npm run build && electron-builder --mac --x64",
@@ -25,13 +24,15 @@
     "pack:all": "npm run build && electron-builder --mac --arm64 --x64 --win --x64 --linux --x64"
   },
   "dependencies": {
+    "archiver": "^7.0.1",
+    "diff-match-patch": "^1.0.5",
     "electron-store": "^8.1.0"
   },
   "devDependencies": {
-    "vite": "^5.0.0",
+    "concurrently": "^8.2.2",
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1",
-    "concurrently": "^8.2.2",
+    "vite": "^5.0.0",
     "wait-on": "^7.2.0"
   },
   "build": {
@@ -55,16 +56,12 @@
           "from": "backend",
           "to": "backend",
           "filter": [
-            "**/*",
+            "**/*.json",
             "!uploads/**",
-            "!**/__pycache__/**"
-          ]
-        },
-        {
-          "from": "vendor/darwin/python",
-          "to": "vendor/python",
-          "filter": [
-            "**/*"
+            "!**/__pycache__/**",
+            "!*.py",
+            "!elevenlabs_settings.json",
+            "!gladia_keys.json"
           ]
         },
         {
@@ -86,9 +83,12 @@
           "from": "backend",
           "to": "backend",
           "filter": [
-            "**/*",
+            "**/*.json",
             "!uploads/**",
-            "!**/__pycache__/**"
+            "!**/__pycache__/**",
+            "!*.py",
+            "!elevenlabs_settings.json",
+            "!gladia_keys.json"
           ]
         },
         {
@@ -99,22 +99,17 @@
           ]
         },
         {
-          "from": "vendor/windows",
-          "to": "vendor/windows",
+          "from": "vendor/windows/ffmpeg",
+          "to": "vendor/ffmpeg",
           "filter": [
             "**/*"
           ]
-        },
-        {
-          "from": "安装依赖.bat",
-          "to": "../安装依赖.bat"
         }
       ]
     },
     "linux": {
       "target": [
-        "AppImage",
-        "deb"
+        "AppImage"
       ],
       "icon": "assets/icon.png",
       "category": "AudioVideo",
@@ -123,21 +118,17 @@
           "from": "backend",
           "to": "backend",
           "filter": [
-            "**/*",
+            "**/*.json",
             "!uploads/**",
-            "!**/__pycache__/**"
+            "!**/__pycache__/**",
+            "!*.py",
+            "!elevenlabs_settings.json",
+            "!gladia_keys.json"
           ]
         },
         {
           "from": "assets",
           "to": "assets",
-          "filter": [
-            "**/*"
-          ]
-        },
-        {
-          "from": "vendor/linux",
-          "to": "vendor",
           "filter": [
             "**/*"
           ]

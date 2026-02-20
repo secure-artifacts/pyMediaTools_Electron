@@ -30,7 +30,7 @@
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
-    "electron": "^28.0.0",
+    "electron": "^28.3.3",
     "electron-builder": "^24.9.1",
     "vite": "^5.0.0",
     "wait-on": "^7.2.0"
@@ -103,6 +103,33 @@
           "to": "vendor/ffmpeg",
           "filter": [
             "**/*"
+          ]
+        },
+        {
+          "from": "vendor/windows/python",
+          "to": "vendor/python",
+          "filter": [
+            "*.exe",
+            "*.dll",
+            "*.pyd",
+            "*.zip",
+            "*.pth",
+            "LICENSE.txt",
+            "python.cat",
+            "Lib/site-packages/yt_dlp/**/*",
+            "Lib/site-packages/yt_dlp*/**/*",
+            "Lib/site-packages/certifi/**/*",
+            "Lib/site-packages/urllib3/**/*",
+            "Lib/site-packages/requests/**/*",
+            "Lib/site-packages/charset_normalizer/**/*",
+            "Lib/site-packages/idna/**/*",
+            "Lib/site-packages/brotli*/**/*",
+            "Lib/site-packages/websockets/**/*",
+            "Lib/site-packages/mutagen/**/*",
+            "Lib/site-packages/pycryptodomex/**/*",
+            "!**/__pycache__/**",
+            "!**/test/**",
+            "!**/tests/**"
           ]
         }
       ]

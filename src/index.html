@@ -305,17 +305,6 @@
       <!-- ==================== 媒体转换面板 ==================== -->
       <section id="media-panel" class="panel">
         <div class="panel-content">
-          <!-- 文件选择 -->
-          <div class="form-section">
-            <h3 class="section-title">输入文件</h3>
-            <div class="file-input-group" id="media-drop-zone"
-              style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 12px; transition: all 0.2s;">
-              <input type="text" id="media-input-path" class="input file-path" placeholder="选择或拖拽视频/音频/图片文件" readonly>
-              <input type="file" id="media-input-file" class="hidden-file-input" multiple>
-              <button class="btn btn-secondary"
-                onclick="document.getElementById('media-input-file').click()">选择文件</button>
-            </div>
-          </div>
 
           <!-- 转换模块子标签 -->
           <div class="sub-tabs">
@@ -325,6 +314,20 @@
             <button class="sub-tab" data-subtab="media-scene">✂️ 场景检测</button>
             <button class="sub-tab" data-subtab="media-thumbnail">📸 批量截图</button>
             <button class="sub-tab" data-subtab="media-classify">🔍 画面分类</button>
+            <button class="sub-tab" data-subtab="media-lipsync">🗣️ 口型同步</button>
+            <button class="sub-tab" data-subtab="media-batchcut">🎞️ 批量剪辑</button>
+          </div>
+
+          <!-- 文件选择（仅 Logo/水印/格式转换 使用） -->
+          <div id="media-file-section" class="form-section">
+            <h3 class="section-title">输入文件</h3>
+            <div class="file-input-group" id="media-drop-zone"
+              style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 12px; transition: all 0.2s;">
+              <input type="text" id="media-input-path" class="input file-path" placeholder="选择或拖拽视频/音频/图片文件" readonly>
+              <input type="file" id="media-input-file" class="hidden-file-input" multiple>
+              <button class="btn btn-secondary"
+                onclick="document.getElementById('media-input-file').click()">选择文件</button>
+            </div>
           </div>
 
           <!-- ========== Logo 叠加模块 ========== -->
@@ -1034,6 +1037,324 @@
             </div>
           </div>
 
+          <!-- ========== 口型同步模块 (Wav2Lip) ========== -->
+          <div id="media-lipsync-subtab" class="subtab-content">
+            <div class="form-section">
+              <h4 style="margin-bottom: 8px; color: var(--text-secondary);">🗣️ Wav2Lip 口型同步</h4>
+              <p class="hint" style="margin-bottom: 12px;">
+                上传一段人物说话的视频和一段音频，AI 会自动将视频中人物的口型替换为与音频匹配的口型。
+                支持 Apple Silicon (M1/M2/M3/M4) 加速。
+              </p>
+            </div>
+
+            <!-- 环境状态 -->
+            <div class="form-section" id="lipsync-env-section">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                <span id="lipsync-env-status" style="font-size: 13px; color: var(--text-muted);">🔍 检测环境中...</span>
+                <button class="btn btn-secondary" onclick="checkLipSyncEnv()"
+                  style="font-size: 11px; padding: 4px 8px;">🔄 重新检测</button>
+              </div>
+              <div id="lipsync-env-detail"
+                style="font-size: 12px; color: var(--text-muted); padding: 8px; background: var(--bg-tertiary); border-radius: 6px; display: none;">
+              </div>
+            </div>
+
+            <!-- 视频/图片文件 -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 8px; color: var(--text-secondary);">📹 人脸视频/图片</h4>
+              <div class="file-input-group">
+                <input type="text" id="lipsync-face-path" class="input file-path" placeholder="选择包含人脸的视频或图片" readonly>
+                <input type="file" id="lipsync-face-input" class="hidden-file-input"
+                  accept=".mp4,.mov,.mkv,.avi,.wmv,.jpg,.jpeg,.png,.bmp">
+                <button class="btn btn-secondary"
+                  onclick="document.getElementById('lipsync-face-input').click()">选择文件</button>
+              </div>
+            </div>
+
+            <!-- 音频文件 -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 8px; color: var(--text-secondary);">🎤 驱动音频</h4>
+              <div class="file-input-group">
+                <input type="text" id="lipsync-audio-path" class="input file-path" placeholder="选择音频文件（口型将与此音频同步）"
+                  readonly>
+                <input type="file" id="lipsync-audio-input" class="hidden-file-input"
+                  accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,.mp4,.mov,.mkv">
+                <button class="btn btn-secondary"
+                  onclick="document.getElementById('lipsync-audio-input').click()">选择文件</button>
+              </div>
+            </div>
+
+            <!-- 参数设置 -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 8px; color: var(--text-secondary);">⚙️ 参数设置</h4>
+              <div class="params-grid">
+                <div class="param-row">
+                  <label>人脸 Padding:</label>
+                  <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="font-size: 12px; color: var(--text-muted);">上</span>
+                    <input type="number" id="lipsync-pad-top" class="input input-small" value="0" style="width: 50px;">
+                    <span style="font-size: 12px; color: var(--text-muted);">下</span>
+                    <input type="number" id="lipsync-pad-bottom" class="input input-small" value="10"
+                      style="width: 50px;">
+                    <span style="font-size: 12px; color: var(--text-muted);">左</span>
+                    <input type="number" id="lipsync-pad-left" class="input input-small" value="0" style="width: 50px;">
+                    <span style="font-size: 12px; color: var(--text-muted);">右</span>
+                    <input type="number" id="lipsync-pad-right" class="input input-small" value="0"
+                      style="width: 50px;">
+                  </div>
+
+                  <label>缩放因子:</label>
+                  <select id="lipsync-resize" class="select" style="width: 100px;">
+                    <option value="1" selected>原始</option>
+                    <option value="2">1/2</option>
+                    <option value="3">1/3</option>
+                    <option value="4">1/4</option>
+                  </select>
+
+                  <label>批大小:</label>
+                  <input type="number" id="lipsync-batch" class="input input-small" value="32" style="width: 60px;">
+                </div>
+              </div>
+              <p class="hint" style="margin-top: 6px;">Padding: 增大下巴(下)的值可包含更多下巴区域。缩放: 降低分辨率可加速处理。</p>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="form-section" style="display: flex; align-items: center; gap: 12px;">
+              <button id="lipsync-start-btn" class="btn btn-primary" onclick="startLipSync()" style="min-width: 160px;">
+                🗣️ 开始口型同步
+              </button>
+              <span id="lipsync-status" class="status-text" style="font-size: 13px;">就绪</span>
+            </div>
+
+            <!-- 进度 -->
+            <div id="lipsync-progress-section" class="form-section hidden">
+              <div class="status-box">
+                <span id="lipsync-progress-text" class="status-text">处理中...</span>
+                <div id="lipsync-progress-bar" class="progress-bar">
+                  <div class="progress-bar-inner" style="width: 0%; transition: width 0.3s;"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 结果 -->
+            <div id="lipsync-result-section" class="form-section hidden">
+              <div style="padding: 12px; background: var(--bg-tertiary); border-radius: 8px;">
+                <h4 style="color: var(--accent); margin-bottom: 8px;">✅ 口型同步完成</h4>
+                <div id="lipsync-result-detail"
+                  style="font-size: 13px; color: var(--text-secondary); line-height: 1.6;"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ========== 批量剪辑模块 ========== -->
+          <div id="media-batchcut-subtab" class="subtab-content">
+            <!-- 视频文件选择 -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">🎬 选择要剪辑的视频文件</h4>
+              <div class="file-input-group" id="batchcut-drop-zone"
+                style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 12px; transition: all 0.2s;">
+                <input type="text" id="batchcut-video-path" class="input file-path" placeholder="选择或拖拽视频文件" readonly>
+                <input type="file" id="batchcut-video-input" class="hidden-file-input"
+                  accept=".mp4,.mov,.mkv,.avi,.wmv,.flv,.webm,.m4v">
+                <button class="btn btn-secondary"
+                  onclick="document.getElementById('batchcut-video-input').click()">选择文件</button>
+              </div>
+              <!-- 视频信息 -->
+              <div id="batchcut-video-info"
+                style="display: none; margin-top: 8px; padding: 8px 12px; background: var(--bg-tertiary); border-radius: 6px; font-size: 12px; color: var(--text-muted); display: none;">
+              </div>
+            </div>
+
+            <!-- 视频预览器 -->
+            <div id="batchcut-preview-section" class="form-section" style="display: none;">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">👁️ 剪辑点预览</h4>
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                <!-- 入点预览 -->
+                <div style="text-align: center;">
+                  <div style="font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 6px;">📍 入点画面
+                  </div>
+                  <div
+                    style="background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16/9; position: relative;">
+                    <video id="batchcut-preview-in" style="width: 100%; height: 100%; object-fit: contain;"
+                      preload="auto" muted></video>
+                  </div>
+                  <div style="font-family: monospace; font-size: 13px; margin-top: 4px; color: var(--text-primary);"
+                    id="batchcut-preview-in-tc">--:--:--:--</div>
+                </div>
+                <!-- 出点预览 -->
+                <div style="text-align: center;">
+                  <div style="font-size: 11px; font-weight: 600; color: #f87171; margin-bottom: 6px;">📍 出点画面</div>
+                  <div
+                    style="background: #000; border-radius: 8px; overflow: hidden; aspect-ratio: 16/9; position: relative;">
+                    <video id="batchcut-preview-out" style="width: 100%; height: 100%; object-fit: contain;"
+                      preload="auto" muted></video>
+                  </div>
+                  <div style="font-family: monospace; font-size: 13px; margin-top: 4px; color: var(--text-primary);"
+                    id="batchcut-preview-out-tc">--:--:--:--</div>
+                </div>
+              </div>
+              <!-- 播放控制 -->
+              <div
+                style="display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 10px; flex-wrap: wrap;">
+                <button class="btn btn-secondary" onclick="batchCutPreviewStep('in', -1)"
+                  style="padding: 3px 8px; font-size: 12px;" title="入点前一帧">◀◀</button>
+                <button class="btn btn-secondary" onclick="batchCutPreviewStep('in', 1)"
+                  style="padding: 3px 8px; font-size: 12px;" title="入点后一帧">▶▶</button>
+                <button class="btn btn-primary" onclick="batchCutPreviewPlay()"
+                  style="padding: 3px 12px; font-size: 12px;" id="batchcut-preview-play-btn">▶ 播放入点</button>
+                <span style="color: var(--text-muted); font-size: 11px;">|</span>
+                <button class="btn btn-secondary" onclick="batchCutPreviewStep('out', -1)"
+                  style="padding: 3px 8px; font-size: 12px;" title="出点前一帧">◀◀</button>
+                <button class="btn btn-secondary" onclick="batchCutPreviewStep('out', 1)"
+                  style="padding: 3px 8px; font-size: 12px;" title="出点后一帧">▶▶</button>
+                <button class="btn btn-primary" onclick="batchCutPreviewPlay('out')"
+                  style="padding: 3px 12px; font-size: 12px;" id="batchcut-preview-play-out-btn">▶ 播放出点</button>
+              </div>
+              <div style="font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 6px;"
+                id="batchcut-preview-info">
+                点击片段列表中的 👁️ 按钮预览该片段的入出点画面
+              </div>
+            </div>
+
+            <!-- 剪辑片段表 -->
+            <div class="form-section">
+              <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;">
+                <h4 style="margin: 0; color: var(--text-secondary);">📋 剪辑片段列表</h4>
+                <button class="btn btn-secondary" onclick="batchCutAddRow()"
+                  style="padding: 4px 10px; font-size: 12px;">
+                  ➕ 添加行
+                </button>
+                <button class="btn btn-secondary" onclick="batchCutPasteFromText()"
+                  style="padding: 4px 10px; font-size: 12px;" title="粘贴入出点（格式：名称 入点 出点，每行一个）">
+                  📋 粘贴入出点
+                </button>
+                <button class="btn btn-secondary" onclick="batchCutPasteYouTubeTimestamps()"
+                  style="padding: 4px 10px; font-size: 12px;" title="粘贴YouTube时间戳（格式：时间 名称，每行一个，自动生成片段）">
+                  📺 YouTube时间戳
+                </button>
+                <button class="btn btn-secondary" onclick="batchCutPasteTable()"
+                  style="padding: 4px 10px; font-size: 12px;" title="从 Excel / Google Sheets 粘贴表格数据">
+                  📊 表格模式
+                </button>
+                <button class="btn btn-secondary" onclick="batchCutClearAll()"
+                  style="padding: 4px 10px; font-size: 12px;">
+                  🧹 清空
+                </button>
+                <span id="batchcut-segment-count"
+                  style="font-size: 12px; color: var(--text-muted); margin-left: auto;">0 个片段</span>
+              </div>
+
+              <!-- 表头（动态渲染） -->
+              <div id="batchcut-table-header"></div>
+
+              <!-- 片段行容器 -->
+              <div id="batchcut-segment-list"
+                style="max-height: 400px; overflow-y: auto; background: var(--bg-tertiary); border-radius: 0 0 6px 6px; padding: 4px;">
+                <p class="hint" style="padding: 20px; text-align: center;">
+                  点击「添加行」或「从文本粘贴」来添加剪辑片段
+                </p>
+              </div>
+
+              <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+                <span class="hint" style="margin: 0;">帧率（自动检测，用于 HH:MM:SS:FF 时码转换）:</span>
+                <select id="batchcut-fps"
+                  style="font-size: 12px; padding: 2px 6px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px;">
+                  <option value="25" selected>25 fps</option>
+                  <option value="24">24 fps</option>
+                  <option value="29.97">29.97 fps</option>
+                  <option value="30">30 fps</option>
+                  <option value="23.976">23.976 fps</option>
+                </select>
+              </div>
+              <p class="hint" style="margin-top: 6px;">
+                时间格式支持:
+                <code>MM:SS</code>、<code>HH:MM:SS</code>、<code>HH:MM:SS.mmm</code>、<code>HH:MM:SS:FF</code>（NDF）、
+                <code>HH:MM:SS;FF</code>（DF）或纯秒数。留空「结束时间」表示到视频结尾。
+              </p>
+            </div>
+
+            <!-- 剪辑选项 -->
+            <div class="form-section">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">⚙️ 剪辑选项</h4>
+              <div class="checkbox-row">
+                <label class="checkbox-label">
+                  <input type="checkbox" id="batchcut-precise-mode" onchange="toggleBatchCutPaddingUI()">
+                  <span>精确模式（帧级精准，重编码，速度较慢）</span>
+                </label>
+                <label class="checkbox-label">
+                  <input type="checkbox" id="batchcut-open-after">
+                  <span>完成后打开输出目录</span>
+                </label>
+              </div>
+              <!-- 快速模式余量设置 -->
+              <div id="batchcut-padding-row"
+                style="margin-top: 8px; padding: 8px 12px; background: var(--bg-tertiary); border-radius: 6px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <span style="font-size: 12px; color: var(--text-secondary);">⚡ 快速模式余量（自动扩展入出点，确保内容完整）:</span>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                  <span style="font-size: 12px; color: var(--text-muted);">入点提前</span>
+                  <input type="number" id="batchcut-padding-before" value="3" min="0" max="10" step="1"
+                    style="width: 50px; font-size: 12px; padding: 2px 6px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; text-align: center;">
+                  <span style="font-size: 12px; color: var(--text-muted);">秒</span>
+                </div>
+                <div style="display: flex; align-items: center; gap: 4px;">
+                  <span style="font-size: 12px; color: var(--text-muted);">出点延后</span>
+                  <input type="number" id="batchcut-padding-after" value="3" min="0" max="10" step="1"
+                    style="width: 50px; font-size: 12px; padding: 2px 6px; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px; text-align: center;">
+                  <span style="font-size: 12px; color: var(--text-muted);">秒</span>
+                </div>
+              </div>
+              <p class="hint" style="margin-top: 6px;">
+                ✅ <strong>精确模式</strong>：重编码 (libx264 CRF 18)，帧级精准，适合需要严格入出点的场景，速度较慢。<br>
+                ⚡ <strong>快速模式</strong>：stream copy 秒剪，但只能在关键帧处切割。开启余量后自动扩展入出点（如提前3秒/延后3秒），确保你要的内容一定在里面，只是前后多几秒。
+              </p>
+            </div>
+
+            <!-- FCPXML 字幕样式设置（动态渲染） -->
+            <div class="form-section">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 12px;">
+                <h4 style="margin: 0; color: var(--text-secondary);">🎨 FCPXML 字幕样式</h4>
+                <button class="btn btn-secondary" onclick="addBatchCutSubtitleColumn()"
+                  style="padding: 2px 8px; font-size: 11px;" title="添加一个字幕列">➕ 添加字幕列</button>
+              </div>
+              <div id="fcpxml-style-container" style="display: flex; flex-wrap: wrap; gap: 12px;"></div>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="form-section" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+              <button id="batchcut-start-btn" class="btn btn-primary" onclick="startBatchCut()"
+                style="min-width: 160px;">
+                🎞️ 开始批量剪辑
+              </button>
+              <button class="btn btn-secondary" onclick="exportBatchCutFcpxml()"
+                style="padding: 6px 12px; font-size: 12px;" title="导出 FCPXML 时间线给达芬奇 / Final Cut Pro">
+                📽️ 导出FCPXML时间线
+              </button>
+              <button class="btn btn-secondary" onclick="openBatchCutOutputDir()"
+                style="padding: 6px 12px; font-size: 12px;">
+                📁 打开输出目录
+              </button>
+              <span id="batchcut-status" class="status-text" style="font-size: 13px;">就绪</span>
+            </div>
+
+            <!-- 进度 -->
+            <div id="batchcut-progress-section" class="form-section hidden">
+              <div class="status-box">
+                <span id="batchcut-progress-text" class="status-text">处理中...</span>
+                <div id="batchcut-progress-bar" class="progress-bar">
+                  <div class="progress-bar-inner" style="width: 0%; transition: width 0.3s;"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- 结果展示 -->
+            <div id="batchcut-result-section" class="form-section hidden">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📊 剪辑结果</h4>
+              <div id="batchcut-result-list"
+                style="padding: 12px; background: var(--bg-tertiary); border-radius: 8px; max-height: 300px; overflow-y: auto;">
+              </div>
+            </div>
+          </div>
+
           <!-- 输出目录 -->
           <div class="form-section">
             <h3 class="section-title">输出目录</h3>
@@ -1632,6 +1953,125 @@
             ✂️ 导出裁切片段
           </button>
           <span id="trim-export-status" style="font-size: 13px; color: var(--text-muted);"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 批量剪辑粘贴弹窗 ========== -->
+  <div id="batchcut-paste-modal"
+    style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); z-index: 10000; display: none; align-items: center; justify-content: center;">
+    <div
+      style="background: var(--bg-secondary); border-radius: 12px; width: 720px; max-width: 90vw; max-height: 85vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,0.4); border: 1px solid var(--border-color);">
+      <!-- 标题栏 -->
+      <div
+        style="display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--border-color);">
+        <h3 style="margin: 0; font-size: 16px;" id="batchcut-paste-title">📋 粘贴剪辑片段</h3>
+        <button class="btn btn-secondary" onclick="closeBatchCutPasteModal()"
+          style="padding: 4px 12px; font-size: 13px;">✕ 关闭</button>
+      </div>
+
+      <!-- 模式切换 -->
+      <div style="display: flex; gap: 0; border-bottom: 1px solid var(--border-color);">
+        <button id="paste-mode-inout" class="btn" onclick="switchPasteMode('inout')"
+          style="flex: 1; padding: 10px; border-radius: 0; border: none; border-bottom: 2px solid var(--accent); font-size: 13px; font-weight: 600; background: transparent; color: var(--accent); cursor: pointer;">
+          📋 入出点模式
+        </button>
+        <button id="paste-mode-youtube" class="btn" onclick="switchPasteMode('youtube')"
+          style="flex: 1; padding: 10px; border-radius: 0; border: none; border-bottom: 2px solid transparent; font-size: 13px; font-weight: 600; background: transparent; color: var(--text-muted); cursor: pointer;">
+          📺 YouTube时间戳
+        </button>
+        <button id="paste-mode-table" class="btn" onclick="switchPasteMode('table')"
+          style="flex: 1; padding: 10px; border-radius: 0; border: none; border-bottom: 2px solid transparent; font-size: 13px; font-weight: 600; background: transparent; color: var(--text-muted); cursor: pointer;">
+          📊 表格模式
+        </button>
+      </div>
+
+      <div style="padding: 16px 20px;">
+        <!-- 格式说明 - 入出点模式 -->
+        <div id="paste-help-inout">
+          <div
+            style="padding: 10px 14px; background: var(--bg-tertiary); border-radius: 8px; margin-bottom: 12px; font-size: 12px; line-height: 1.8;">
+            <div style="font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">📌 格式说明：每行一个片段，包含「入点」和「出点」
+            </div>
+            <div style="color: var(--text-muted);">
+              支持 <strong>Tab 分割</strong>（Excel 直接复制）或 <strong>空格分割</strong><br>
+              时间格式: <code>MM:SS</code> · <code>HH:MM:SS</code> · <code>HH:MM:SS.mmm</code> ·
+              <code>HH:MM:SS:FF</code>（帧码）· 纯秒数
+            </div>
+            <div
+              style="margin-top: 8px; padding: 8px 10px; background: var(--bg-primary); border-radius: 6px; font-family: monospace; color: var(--text-primary); white-space: pre; line-height: 1.6;">
+              片段A 00:00:53:19 00:00:57:03
+              片段B 00:00:57:03 00:01:02:22
+              片段C 00:01:02:22 00:01:04:29</div>
+            <div style="margin-top: 6px; color: var(--text-muted); font-size: 11px;">
+              💡 也可以省略名称，只粘贴两列时间；留空出点表示到视频结尾
+            </div>
+          </div>
+        </div>
+
+        <!-- 格式说明 - YouTube模式 -->
+        <div id="paste-help-youtube" style="display: none;">
+          <div
+            style="padding: 10px 14px; background: var(--bg-tertiary); border-radius: 8px; margin-bottom: 12px; font-size: 12px; line-height: 1.8;">
+            <div style="font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">📌 格式说明：直接从 YouTube
+              说明栏复制时间戳</div>
+            <div style="color: var(--text-muted);">
+              每行一个时间戳 + 标题，系统自动将 <strong>相邻时间点之间</strong> 生成为片段
+            </div>
+            <div
+              style="margin-top: 8px; padding: 8px 10px; background: var(--bg-primary); border-radius: 6px; font-family: monospace; color: var(--text-primary); white-space: pre; line-height: 1.6;">
+              0:00 片头介绍
+              2:30 第一章 正文内容
+              5:15 第二章 深入讨论
+              10:00 总结与结尾</div>
+            <div style="margin-top: 6px; color: var(--text-muted); font-size: 11px;">
+              💡 最后一个时间戳到视频结尾为最后一个片段。时间戳和标题的顺序不限。
+            </div>
+          </div>
+        </div>
+
+        <!-- 格式说明 - 表格模式 -->
+        <div id="paste-help-table" style="display: none;">
+          <div
+            style="padding: 10px 14px; background: var(--bg-tertiary); border-radius: 8px; margin-bottom: 12px; font-size: 12px; line-height: 1.8;">
+            <div style="font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">📌 格式说明：直接从 Excel / Google
+              Sheets 复制多列数据</div>
+            <div style="color: var(--text-muted);">
+              系统会<strong>自动识别</strong>哪一列是名称、哪一列是时间范围、哪些列是字幕<br>
+              支持时间范围格式: <code>14:16—18:43</code> · <code>0:30-1:20</code> · <code>00:05:00~00:10:00</code><br>
+              第一行如果包含表头关键词，会自动跳过并用作字幕列名称
+            </div>
+            <div
+              style="margin-top: 8px; padding: 8px 10px; background: var(--bg-primary); border-radius: 6px; font-family: monospace; color: var(--text-primary); white-space: pre; line-height: 1.6; font-size: 11px;">
+              片段名称 剪辑时间段 封面标题 英文-FB 英文-TK
+              揭晓第五名 14:16—18:43 (忽略) GOD LET YOU IF YOU'RE
+              揭晓第四名 18:44—24:24 (忽略) THE HOLY THIS IS NO</div>
+            <div style="margin-top: 6px; color: var(--text-muted); font-size: 11px;">
+              💡 粘贴后系统自动检测列映射。不需要的列（如「封面标题」）会自动归入字幕列，可在导入后手动删除。
+            </div>
+          </div>
+        </div>
+
+        <!-- 文本输入区 -->
+        <textarea id="batchcut-paste-textarea"
+          style="width: 100%; height: 200px; padding: 12px; font-family: monospace; font-size: 13px; line-height: 1.6; background: var(--bg-primary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 8px; resize: vertical;"
+          placeholder="在这里粘贴内容..."></textarea>
+
+        <!-- 预览区 -->
+        <div id="batchcut-paste-preview"
+          style="margin-top: 12px; padding: 10px 14px; background: var(--bg-tertiary); border-radius: 8px; font-size: 12px; min-height: 40px; max-height: 200px; overflow-y: auto; display: none;">
+        </div>
+
+        <!-- 按钮 -->
+        <div style="display: flex; align-items: center; gap: 12px; margin-top: 16px;">
+          <button class="btn btn-primary" onclick="confirmBatchCutPaste()" style="padding: 8px 24px;">
+            ✅ 确认导入
+          </button>
+          <button class="btn btn-secondary" onclick="previewBatchCutPaste()" style="padding: 8px 16px;">
+            👁️ 预览解析结果
+          </button>
+          <span id="batchcut-paste-status" style="font-size: 12px; color: var(--text-muted);"></span>
         </div>
       </div>
     </div>

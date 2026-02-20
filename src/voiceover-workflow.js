@@ -99,6 +99,7 @@ async function vwPasteFromClipboard() {
             status: 'pending',
             error: null,
             audioPath: null,
+            mp4Path: null,
             segments: null
         }));
 
@@ -146,6 +147,7 @@ function renderVWTasks() {
             </div>
             ${task.voiceId ? `<div style="font-size: 10px; color: var(--text-muted); margin-top: 2px;">音色: ${task.voiceId}</div>` : ''}
             ${task.error ? `<div style="font-size: 10px; color: #ff6b6b; margin-top: 4px;">❌ ${escapeHtml(task.error)}</div>` : ''}
+            ${task.mp4Path ? `<div style="font-size: 10px; color: #51cf66; margin-top: 4px;">🎬 MP4: ${escapeHtml(task.mp4Path)}</div>` : ''}
             ${task.segments ? `<div style="font-size: 10px; color: #51cf66; margin-top: 4px;">✅ ${task.segments.length} 个片段</div>` : ''}
         </div>
     `).join('');
@@ -380,8 +382,13 @@ async function startVoiceoverWorkflow() {
 
                 task.audioPath = ttsData.audio_path;
                 task.outputFolder = ttsData.output_folder;
+                task.mp4Path = ttsData.mp4_path || null;
                 task.segments = ttsData.segments;
                 task.status = 'done';
+
+                if (!document.getElementById('vw-output-dir').value.trim() && ttsData.output_folder) {
+                    document.getElementById('vw-output-dir').value = ttsData.output_folder;
+                }
 
             } catch (err) {
                 task.status = 'error';

@@ -13,12 +13,15 @@ const ffmpegService = require('./services/ffmpeg');
 const elevenlabsService = require('./services/elevenlabs');
 const settingsService = require('./services/settings');
 const subtitleService = require('./services/subtitle');
+const fcpxmlService = require('./services/fcpxml');
+
 const ytdlpService = require('./services/ytdlp');
 const gladiaService = require('./services/gladia');
 const imageClassifyService = require('./services/imageClassify');
 const workflowService = require('./services/workflow');
 const subtitleUtils = require('./services/subtitleUtils');
 const { audioSubtitleSearchDifferentStrong } = require('./services/subtitleAlignment');
+const wav2lipService = require('./services/wav2lip');
 
 /**
  * 注册所有 IPC API 路由
@@ -232,6 +235,16 @@ async function routeAPI(endpoint, data) {
             return subtitleService.computeCharTime(data.ref_path, data.interval_time);
 
         // ==================== 媒体操作 ====================
+        case 'media/info': {
+            if (!data.file_path) throw new Error('缺少文件路径');
+            const [duration, frameRate, resolution] = await Promise.all([
+                ffmpegService.getDuration(data.file_path),
+                ffmpegService.getFrameRate(data.file_path),
+                ffmpegService.getResolution(data.file_path)
+            ]);
+            return { duration, frame_rate: frameRate, resolution };
+        }
+
         case 'media/waveform': {
             if (!data.file_path) throw new Error('缺少文件路径');
             return await ffmpegService.getWaveformBinary(data.file_path, data.num_peaks || 300);
@@ -241,8 +254,8 @@ async function routeAPI(endpoint, data) {
             if (!data.file_path) throw new Error('缺少文件路径');
             return await ffmpegService.mediaTrim(
                 data.file_path,
-                parseFloat(data.start_time),
-                parseFloat(data.end_time),
+                parseFloat(data.start_time ?? data.start),
+                parseFloat(data.end_time ?? data.end),
                 data.output_dir,
                 data.precise !== false
             );
@@ -258,6 +271,36 @@ async function routeAPI(endpoint, data) {
         case 'media/scene-split':
             if (!data.file_path || !data.segments) throw new Error('缺少参数');
             return await ffmpegService.sceneSplit(data.file_path, data.segments, data.output_dir);
+
+        case 'media/batch-cut':
+            if (!data.file_path) throw new Error('缺少文件路径');
+            if (!data.segments || data.segments.length === 0) throw new Error('缺少剪辑片段');
+            return await ffmpegService.batchCut(
+                data.file_path,
+                data.segments,
+                data.output_dir,
+                data.precise !== false
+            );
+
+        case 'media/export-fcpxml-timeline': {
+            if (!data.file_path) throw new Error('缺少文件路径');
+            if (!data.segments || data.segments.length === 0) throw new Error('缺少剪辑片段');
+            const outDir = data.output_dir || path.dirname(data.file_path);
+            const baseName = path.basename(data.file_path, path.extname(data.file_path));
+            const fcpxmlPath = path.join(outDir, `${baseName}_timeline.fcpxml`);
+            return fcpxmlService.segmentsToFcpxml(
+                data.file_path,
+                data.segments,
+                data.duration || 0,
+                data.fps || 30,
+                data.resolution || '1920x1080',
+                fcpxmlPath,
+                data.subtitle_style || null
+            );
+        }
+
+
+
 
         case 'media/convert': {
             const files = data.files || [data.file_path];
@@ -451,7 +494,7 @@ async function routeAPI(endpoint, data) {
         case 'video/download-batch':
             if (!data.items || data.items.length === 0) throw new Error('没有要下载的视频');
             return await ytdlpService.downloadBatch(data.items, {
-                outputDir: data.output_dir,
+                outputDir: data.output_dir || undefined,
                 audioOnly: data.options?.audio_only,
                 ext: data.options?.ext,
                 quality: data.options?.quality,
@@ -490,6 +533,36 @@ async function routeAPI(endpoint, data) {
 
         case 'status':
             return { status: 'ok', backend: 'nodejs', uptime: process.uptime() };
+
+        // ==================== Wav2Lip 口型同步 ====================
+        case 'wav2lip/check':
+            return await wav2lipService.checkEnvironment();
+
+        case 'wav2lip/run': {
+            if (!data.face_path) throw new Error('缺少视频/图片路径');
+            if (!data.audio_path) throw new Error('缺少音频路径');
+
+            // 获取窗口以发送进度事件
+            const { BrowserWindow } = require('electron');
+            const wins = BrowserWindow.getAllWindows();
+
+            return await wav2lipService.lipSync({
+                facePath: data.face_path,
+                audioPath: data.audio_path,
+                outputPath: data.output_path || '',
+                pads: data.pads || [0, 10, 0, 0],
+                resizeFactor: parseInt(data.resize_factor) || 1,
+                batchSize: parseInt(data.batch_size) || 32,
+                onProgress: (percent, message) => {
+                    // 通过 IPC 事件发送进度到渲染进程
+                    for (const win of wins) {
+                        try {
+                            win.webContents.send('wav2lip-progress', { percent, message });
+                        } catch { /* window closed */ }
+                    }
+                },
+            });
+        }
 
         default:
             throw new Error(`未知接口: ${ep}`);

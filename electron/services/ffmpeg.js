@@ -141,7 +141,8 @@ async function getResolution(filePath) {
             '-of', 'csv=p=0',
             filePath
         ], { timeout: PROBE_TIMEOUT });
-        return stdout.trim();
+        // ffprobe csv 输出 "1920,1080" → 转为 "1920x1080"
+        return stdout.trim().replace(',', 'x');
     } catch {
         return '';
     }
@@ -189,7 +190,7 @@ async function getWaveform(filePath, numPeaks = 300) {
  */
 function getWaveformBinary(filePath, numPeaks = 300) {
     return new Promise(async (resolve, reject) => {
-        const proc = spawn('ffmpeg', [
+        const proc = spawn(resolveCommand('ffmpeg'), [
             '-hide_banner', '-i', filePath,
             '-ac', '1', '-ar', '8000',
             '-f', 'f32le', 'pipe:1'
@@ -448,20 +449,19 @@ function buildBlackMp4Args(filePath, outputPath, start, duration, size = '1280x7
 
 /** 简化版黑屏 MP4 生成 */
 async function generateBlackMp4(filePath, outputPath, start = 0, duration = null) {
-    // 获取音频时长
-    if (duration == null) {
-        duration = await getDuration(filePath);
+    // 获取音频时长（失败时退化为 shortest 模式，不阻断导出）
+    let resolvedDuration = duration;
+    if (resolvedDuration == null) {
+        resolvedDuration = await getDuration(filePath);
     }
-    const args = [
-        '-y',
-        '-f', 'lavfi', '-i', `color=c=black:s=1920x1080:r=30:d=${duration}`,
-        '-i', filePath,
-        '-c:v', 'libx264', '-preset', 'fast',
-        '-c:a', 'aac', '-ac', '2', '-b:a', '192k',
-        '-shortest',
-        outputPath
-    ];
+
+    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+    const args = buildBlackMp4Args(filePath, outputPath, start, resolvedDuration, '1920x1080', 30);
     await runCommand('ffmpeg', args);
+
+    if (!fs.existsSync(outputPath)) {
+        throw new Error(`黑屏 MP4 未生成: ${outputPath}`);
+    }
 }
 
 /**
@@ -632,6 +632,76 @@ async function smartSplitAnalyze(filePath, maxDuration = 29) {
     };
 }
 
+/** 批量剪辑 — 将一个视频按命名片段列表导出多个文件 */
+async function batchCut(filePath, segments, outputDir, precise = true) {
+    const baseName = path.parse(filePath).name;
+    const ext = path.extname(filePath).toLowerCase();
+    const outDir = outputDir || path.dirname(filePath);
+    const cutOutputDir = path.join(outDir, `${baseName}_cuts`);
+    fs.mkdirSync(cutOutputDir, { recursive: true });
+
+    // 获取视频总时长（用于 "到结尾" 的片段）
+    const totalDuration = await getDuration(filePath);
+
+    const exported = [];
+    for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        const start = parseFloat(seg.start || 0);
+        let end = seg.end != null && seg.end !== '' ? parseFloat(seg.end) : null;
+        if (end == null && totalDuration) end = totalDuration;
+        if (end == null) throw new Error(`片段 #${i + 1}: 无法确定结束时间（无法获取视频总时长）`);
+        if (end - start <= 0) continue;
+
+        // 文件名：序号_名称
+        const safeName = (seg.name || `片段${i + 1}`).replace(/[/\\:*?"<>|]/g, '_');
+        const idx = String(i + 1).padStart(2, '0');
+        const outputFilename = `${idx}_${safeName}${ext}`;
+        const outputPath = path.join(cutOutputDir, outputFilename);
+
+        let args;
+        if (precise) {
+            // 精确模式：重编码，帧级精准
+            args = [
+                '-y', '-i', filePath,
+                '-ss', start.toFixed(3), '-to', end.toFixed(3),
+                '-c:v', 'libx264', '-crf', '18', '-preset', 'fast',
+                '-c:a', 'aac', '-b:a', '192k',
+                '-avoid_negative_ts', 'make_zero',
+                outputPath
+            ];
+        } else {
+            // 快速模式：stream copy
+            args = [
+                '-y', '-ss', start.toFixed(3),
+                '-i', filePath,
+                '-to', (end - start).toFixed(3),
+                '-c', 'copy',
+                '-avoid_negative_ts', 'make_zero',
+                outputPath
+            ];
+        }
+
+        await runCommand('ffmpeg', args);
+
+        exported.push({
+            path: outputPath,
+            filename: outputFilename,
+            name: seg.name || `片段${i + 1}`,
+            index: i + 1,
+            start, end,
+            duration: Math.round((end - start) * 1000) / 1000,
+            mode: precise ? '精确' : '快速'
+        });
+    }
+
+    return {
+        message: `成功导出 ${exported.length} 个片段到 ${cutOutputDir}`,
+        output_dir: cutOutputDir,
+        files: exported,
+        mode: precise ? '精确' : '快速'
+    };
+}
+
 // ==================== 工具函数 ====================
 
 function formatSceneTime(seconds) {
@@ -644,9 +714,12 @@ function formatSceneTime(seconds) {
     return `${String(m).padStart(2, '0')}:${s.toFixed(3).padStart(6, '0')}`;
 }
 
-function parseTimecode(token) {
+function parseTimecode(token, fps = 25) {
     const parts = token.split(':');
-    if (parts.length === 3) {
+    if (parts.length === 4) {
+        // HH:MM:SS:FF (NLE timecode with frames)
+        return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]) + parseFloat(parts[3]) / fps;
+    } else if (parts.length === 3) {
         return parseFloat(parts[0]) * 3600 + parseFloat(parts[1]) * 60 + parseFloat(parts[2]);
     } else if (parts.length === 2) {
         return parseFloat(parts[0]) * 60 + parseFloat(parts[1]);
@@ -695,4 +768,5 @@ module.exports = {
     parseCutPoints,
     buildSegments,
     buildBlackMp4Args,
+    batchCut,
 };

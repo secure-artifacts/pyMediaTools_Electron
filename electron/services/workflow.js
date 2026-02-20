@@ -172,18 +172,15 @@ async function ttsWorkflow(data) {
     // Step 4: 生成黑屏 MP4（如果需要）
     let mp4Path = null;
     if (export_mp4) {
-        try {
-            mp4Path = path.join(videoGroup, `${taskPrefix}.mp4`);
-            await ffmpeg.generateBlackMp4(sourcePath, mp4Path);
-        } catch (e) {
-            console.error('MP4 生成失败:', e);
-        }
+        mp4Path = path.join(videoGroup, `${taskPrefix}.mp4`);
+        await ffmpeg.generateBlackMp4(sourcePath, mp4Path);
     }
 
     return {
         audio_path: sourcePath,
         output_folder: outputDir,
         task_prefix: taskPrefix,
+        mp4_path: mp4Path,
         segments,
         segment_count: segments.length,
     };

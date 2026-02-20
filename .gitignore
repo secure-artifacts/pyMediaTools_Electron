@@ -69,3 +69,9 @@ vendor/windows/python/
 vendor/windows/ffmpeg/
 vendor/linux/
 vendor/darwin/
+vendor/wav2lip/checkpoints/
+vendor/wav2lip/face_detection/checkpoints/
+vendor/wav2lip/face_detection/hub/
+vendor/wav2lip/temp/
+vendor/wav2lip/__pycache__/
+vendor/face_detection/

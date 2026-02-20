@@ -17,7 +17,8 @@ function extractGrayPixels(filePath, hashSize = 8) {
     const w = hashSize + 1;
     const h = hashSize;
     return new Promise((resolve, reject) => {
-        const proc = spawn('ffmpeg', [
+        const ffmpegCmd = process.env.FFMPEG_PATH || 'ffmpeg';
+        const proc = spawn(ffmpegCmd, [
             '-hide_banner', '-loglevel', 'error',
             '-i', filePath,
             '-vframes', '1',

@@ -11,7 +11,7 @@ let powerSaveId = null;
 let isQuitting = false;
 
 // 日志文件路径
-const logDir = app.isPackaged
+const logDir = (app && app.isPackaged)
     ? path.join(app.getPath('userData'), 'logs')
     : path.join(__dirname, '..', 'logs');
 
@@ -72,9 +72,23 @@ function setupFFmpegPath() {
             process.env.PATH = `${additionalPaths}${path.delimiter}${existingPath}`;
         }
     } else if (process.platform === 'win32') {
-        const vendorFfmpeg = path.join(getResourcePath('vendor'), 'windows', 'ffmpeg', 'bin');
-        if (fs.existsSync(vendorFfmpeg)) {
-            process.env.PATH = `${vendorFfmpeg}${path.delimiter}${process.env.PATH || ''}`;
+        // Packaged: extraResources maps vendor/windows/ffmpeg → vendor/ffmpeg
+        // Dev: files sit at vendor/windows/ffmpeg/bin
+        const candidates = [
+            path.join(getResourcePath('vendor'), 'ffmpeg', 'bin'),
+            path.join(getResourcePath('vendor'), 'windows', 'ffmpeg', 'bin'),
+        ];
+        for (const vendorFfmpeg of candidates) {
+            if (fs.existsSync(vendorFfmpeg)) {
+                log(`Using vendor FFmpeg on Windows: ${vendorFfmpeg}`);
+                process.env.PATH = `${vendorFfmpeg}${path.delimiter}${process.env.PATH || ''}`;
+                // Set explicit paths so resolveCommand() and other services can find them
+                const ffmpegExe = path.join(vendorFfmpeg, 'ffmpeg.exe');
+                const ffprobeExe = path.join(vendorFfmpeg, 'ffprobe.exe');
+                if (fs.existsSync(ffmpegExe)) process.env.FFMPEG_PATH = ffmpegExe;
+                if (fs.existsSync(ffprobeExe)) process.env.FFPROBE_PATH = ffprobeExe;
+                break;
+            }
         }
     }
 }
@@ -97,6 +111,7 @@ function createWindow() {
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
+            sandbox: false,
             preload: path.join(__dirname, 'preload.js')
         },
         titleBarStyle: 'hiddenInset',

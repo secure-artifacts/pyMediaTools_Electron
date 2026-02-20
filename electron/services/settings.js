@@ -104,8 +104,10 @@ function saveReplaceRules(data) { writeJSON(getReplaceRulesPath(), data); }
 
 function openFolder(folderPath) {
     let expandedPath = folderPath;
-    if (expandedPath.startsWith('~')) {
-        expandedPath = path.join(os.homedir(), expandedPath.slice(1));
+    if (expandedPath === '~') {
+        expandedPath = os.homedir();
+    } else if (expandedPath.startsWith('~/') || expandedPath.startsWith('~\\')) {
+        expandedPath = path.join(os.homedir(), expandedPath.slice(2));
     }
 
     if (!fs.existsSync(expandedPath)) {

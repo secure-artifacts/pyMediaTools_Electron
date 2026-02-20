@@ -315,9 +315,143 @@ function SrtsToFcpxml(sourceSrt, transSrts, savePath, seamlessFcpxml) {
     console.log(`FCPXML 已写入: ${savePath}`);
 }
 
+/**
+ * 批量剪辑片段 → FCPXML 时间线
+ * 每个片段生成 asset-clip + 动态字幕 title 叠加
+ */
+function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, savePath, subtitleStyle) {
+    fps = fps || 30;
+    const [width, height] = (resolution || '1080x1920').split('x').map(Number);
+
+    // 秒 → 帧分数字符串（标准 FCPXML 格式：totalFrames/fps）
+    function secToFrac(sec) {
+        const fpsInt = Math.round(fps);
+        const totalFrames = Math.round(sec * fpsInt);
+        return `${totalFrames}/${fpsInt}s`;
+    }
+
+    const projectName = path.basename(savePath, path.extname(savePath));
+    const videoSrc = 'file://' + videoPath;
+
+    // 默认字幕样式：Playfair Display SemiBold, 32pt, 黄色, 字距0, 位置 X=720 Y=800
+    const defaultCol = { font: 'Playfair Display', fontFace: 'SemiBold', fontSize: 32, color: '1.0000 0.8980 0.0000 1', posX: 720, posY: 800, bold: '1', tracking: '0', lineSpacing: '0' };
+
+    // 处理字幕列
+    let columns = [defaultCol, { ...defaultCol }];
+    if (subtitleStyle && subtitleStyle.columns) {
+        columns = subtitleStyle.columns.map(col => {
+            const c = { ...defaultCol };
+            if (col.font) c.font = col.font;
+            if (col.fontFace) c.fontFace = col.fontFace;
+            if (col.fontSize) c.fontSize = col.fontSize;
+            if (col.color) {
+                // hex → FCPXML rgba
+                const hex = col.color.replace('#', '');
+                if (hex.length === 6) {
+                    c.color = `${parseInt(hex.substr(0, 2), 16) / 255} ${parseInt(hex.substr(2, 2), 16) / 255} ${parseInt(hex.substr(4, 2), 16) / 255} 1`;
+                }
+            }
+            if (col.bold !== undefined) c.bold = col.bold ? '1' : '0';
+            if (col.tracking !== undefined) c.tracking = String(col.tracking);
+            if (col.lineSpacing !== undefined) c.lineSpacing = String(col.lineSpacing);
+            return c;
+        });
+    }
+
+    // 计算总时间线长度
+    let totalDuration = 0;
+    for (const seg of segments) {
+        const segEnd = seg.end != null ? seg.end : videoDuration;
+        totalDuration += segEnd - seg.start;
+    }
+    const totalDurStr = secToFrac(videoDuration || totalDuration);
+    const timelineDurStr = secToFrac(totalDuration);
+
+    // XML 头部
+    let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+    xml += '<!DOCTYPE fcpxml>\n';
+    xml += '<fcpxml version="1.9">\n';
+    xml += '\t<resources>\n';
+    xml += `\t\t<format id="r0" name="FFVideoFormat${height}p${Math.round(fps)}" frameDuration="${secToFrac(1 / fps)}" width="${width}" height="${height}"/>\n`;
+
+    // 每个片段一个 asset
+    for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        const clipName = seg.name || `片段${i + 1}`;
+        xml += `\t\t<asset name="${xmlEscape(clipName)}" src="${xmlEscape(videoSrc)}" start="0/${Math.round(fps)}s" duration="${totalDurStr}" hasVideo="1" hasAudio="1" format="r0" id="r${i + 1}"/>\n`;
+    }
+    // 文字生成器 effect
+    xml += `\t\t<effect name="Basic Title" uid=".../Titles.localized/Build In:Out.localized/Basic Title.localized/Basic Title.moti" id="r100"/>\n`;
+
+    xml += '\t</resources>\n';
+    xml += '\t<library>\n';
+    xml += `\t\t<event name="${xmlEscape(projectName)}">\n`;
+    xml += `\t\t\t<project name="${xmlEscape(projectName)}">\n`;
+    xml += `\t\t\t\t<sequence tcFormat="NDF" tcStart="0/${Math.round(fps)}s" duration="${timelineDurStr}" format="r0">\n`;
+    xml += '\t\t\t\t\t<spine>\n';
+
+    // 每个片段 → asset-clip + 动态字幕覆盖
+    let timelineOffset = 0;
+    for (let i = 0; i < segments.length; i++) {
+        const seg = segments[i];
+        const segStart = seg.start;
+        const segEnd = seg.end != null ? seg.end : videoDuration;
+        const segDuration = segEnd - segStart;
+
+        const clipName = seg.name || `片段${i + 1}`;
+        const subtitles = seg.subtitles || [clipName, seg.subtitle || ''];
+        const offsetStr = secToFrac(timelineOffset);
+        const startStr = secToFrac(segStart);
+        const durationStr = secToFrac(segDuration);
+
+        xml += `\t\t\t\t\t\t<asset-clip name="${xmlEscape(clipName)}" ref="r${i + 1}" offset="${offsetStr}" start="${startStr}" duration="${durationStr}" format="r0" tcFormat="NDF">\n`;
+
+        // 动态生成每个字幕列的 title 元素
+        for (let ci = 0; ci < columns.length; ci++) {
+            const text = (subtitles[ci] || '').trim();
+            if (!text) continue;
+
+            const col = columns[ci];
+            const lane = columns.length - ci;
+            const styleId = `ts_${i}_${ci}`;
+
+            xml += `\t\t\t\t\t\t\t<title name="${xmlEscape(text.slice(0, 40))}" lane="${lane}" offset="${startStr}" ref="r100" duration="${durationStr}" start="3600/1s">\n`;
+            xml += `\t\t\t\t\t\t\t\t<param name="Position" key="9999/999166631/999166633/2/100/101" value="${col.posX} ${col.posY}"/>\n`;
+            xml += `\t\t\t\t\t\t\t\t<text>\n`;
+            xml += `\t\t\t\t\t\t\t\t\t<text-style ref="${styleId}">${xmlEscape(text)}</text-style>\n`;
+            xml += `\t\t\t\t\t\t\t\t</text>\n`;
+            xml += `\t\t\t\t\t\t\t\t<text-style-def id="${styleId}">\n`;
+            xml += `\t\t\t\t\t\t\t\t\t<text-style font="${col.font || 'Playfair Display'}" fontFace="${col.fontFace || 'SemiBold'}" fontSize="${col.fontSize}" fontColor="${col.color}" bold="${col.bold}" tracking="${col.tracking}" lineSpacing="${col.lineSpacing || '0'}" alignment="center" verticalAlignment="top"/>\n`;
+            xml += `\t\t\t\t\t\t\t\t</text-style-def>\n`;
+            xml += `\t\t\t\t\t\t\t</title>\n`;
+        }
+
+        xml += `\t\t\t\t\t\t</asset-clip>\n`;
+
+        timelineOffset += segDuration;
+    }
+
+    // 闭合标签
+    xml += '\t\t\t\t\t</spine>\n';
+    xml += '\t\t\t\t</sequence>\n';
+    xml += '\t\t\t</project>\n';
+    xml += '\t\t</event>\n';
+    xml += '\t</library>\n';
+    xml += '</fcpxml>\n';
+
+    // 写入文件
+    const dir = path.dirname(savePath);
+    if (dir) fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(savePath, xml, 'utf-8');
+    console.log(`FCPXML 时间线已写入: ${savePath}`);
+
+    return { success: true, path: savePath, segments_count: segments.length };
+}
+
 module.exports = {
     parseSRTString,
     parseSRTTime,
     getFractionTime,
     SrtsToFcpxml,
+    segmentsToFcpxml,
 };

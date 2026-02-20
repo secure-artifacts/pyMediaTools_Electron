@@ -46,7 +46,9 @@
     },
     {
       "key": "sk_8a5d73854fc79ddbfa922afa121051c08a214b829127afda",
-      "enabled": true
+      "enabled": false,
+      "auto_disabled": true,
+      "auto_disabled_reason": "remaining<200"
     }
   ]
 }

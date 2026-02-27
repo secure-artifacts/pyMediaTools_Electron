@@ -158,7 +158,8 @@ function setKeyEnabled(apiKey, enabled, reason = '', source = 'auto') {
         data.keys_with_status = kws;
         saveSettings(data);
         const action = enabled ? '启用' : '停用';
-        const keyPrefix = apiKey.length >= 12 ? `${apiKey.slice(0, 8)}...${apiKey.slice(-4)}` : apiKey;
+        const maskKey = k => k ? '***' + k.slice(-4) : '';
+        const keyPrefix = maskKey(apiKey);
         console.log(`[ElevenLabs] 已${source === 'manual' ? '手动' : '自动'}${action} Key ${keyPrefix}${reason ? '，原因: ' + reason : ''}`);
     }
 }
@@ -323,7 +324,8 @@ async function requestTTSWithRotation(keys, voiceId, text, modelId, stability, o
     let lastErr = null;
     for (let i = 0; i < keysToTry.length; i++) {
         const apiKey = keysToTry[i];
-        const keyLabel = `Key${i + 1}(${apiKey.slice(0, 6)}...)`;
+        const maskKey = k => k ? '***' + k.slice(-4) : '';
+        const keyLabel = `Key${i + 1}(${maskKey(apiKey)})`;
         try {
             const audio = await requestTTS(apiKey, voiceId, text, modelId, stability, outputFormat);
             return { audio, usedKey: apiKey };
@@ -490,17 +492,19 @@ async function getAllQuotas() {
                 autoDisabled = false;
             }
 
+            const maskKey = k => k ? '***' + k.slice(-4) : '';
             results.push({
                 index: i + 1,
-                key_prefix: key.slice(0, 8) + '...' + key.slice(-4),
+                key_prefix: maskKey(key),
                 usage: quota.usage, limit: quota.limit,
                 remaining, percent: quota.limit > 0 ? Math.round(quota.usage / quota.limit * 1000) / 10 : 0,
                 enabled, manual_disabled: manualDisabled, auto_disabled: autoDisabled,
             });
         } catch (e) {
+            const maskKey = k => k ? '***' + k.slice(-4) : '';
             results.push({
                 index: i + 1,
-                key_prefix: key.slice(0, 8) + '...' + key.slice(-4),
+                key_prefix: maskKey(key),
                 error: e.message,
                 enabled, manual_disabled: manualDisabled, auto_disabled: autoDisabled,
             });

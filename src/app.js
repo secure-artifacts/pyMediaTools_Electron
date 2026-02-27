@@ -149,7 +149,7 @@ function showToast(message, type = 'info', duration = 4000) {
     toast.className = `toast toast-${type}`;
     toast.innerHTML = `
         <span class="toast-icon">${type === 'success' ? '✓' : type === 'error' ? '✕' : 'ℹ'}</span>
-        <span class="toast-message">${message}</span>
+        <span class="toast-message">${escapeHtml(message)}</span>
     `;
 
     document.body.appendChild(toast);
@@ -2967,7 +2967,7 @@ async function startMediaConvert() {
                     // 同时更新 fileInfo，后续使用
                     fileInfo.uploadedPath = result.path;
                 } else {
-                    showToast(`上传失败: ${result.error}`, 'error');
+                    showToast(`上传失败: ${escapeHtml(result.error)}`, 'error');
                     statusEl.textContent = '上传失败';
                     return;
                 }
@@ -3687,7 +3687,7 @@ async function loadAllQuotas() {
             list.innerHTML = '<div style="text-align: center; color: var(--text-secondary);">没有配置 API Key</div>';
         }
     } catch (error) {
-        list.innerHTML = `<div style="text-align: center; color: #ff6b6b;">加载失败: ${error.message}</div>`;
+        list.innerHTML = `<div style="text-align: center; color: #ff6b6b;">加载失败: ${escapeHtml(error.message)}</div>`;
     }
 }
 
@@ -4848,13 +4848,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // 去除情绪标签
 function stripEmotionTags(text) {
-    // 匹配常见的情绪标签格式: [tag], <tag>, (tag)
-    let result = text
-        .replace(/\[[a-zA-Z_]+\]/g, '')  // [sad], [happy]
-        .replace(/<[a-zA-Z_]+>/g, '')    // <sad>, <happy>
-        .replace(/\([a-zA-Z_]+\)/g, ''); // (whisper)
-    // 清理多余空格
-    return result.replace(/\s+/g, ' ').trim();
+    if (!text) return '';
+    let res = "";
+    let inTag = false;
+    for (let i = 0; i < text.length; i++) {
+        let c = text[i];
+        if (c === '<' || c === '[' || c === '(') { inTag = true; continue; }
+        if (c === '>' || c === ']' || c === ')') { inTag = false; continue; }
+        if (!inTag) res += c;
+    }
+    return res.replace(/\s+/g, ' ').trim();
 }
 
 // 自动断行按钮点击
@@ -5529,11 +5532,11 @@ async function detectSingleFile(idx) {
 
     } catch (error) {
         if (statusTag) {
-            statusTag.textContent = `❌ ${error.message}`;
+            statusTag.textContent = `❌ ${escapeHtml(error.message)}`;
             statusTag.style.background = 'rgba(255, 71, 87, 0.15)';
             statusTag.style.color = '#ff4757';
         }
-        showToast(`${file.name}: ${error.message}`, 'error');
+        showToast(`${file.name}: ${escapeHtml(error.message)}`, 'error');
     }
 }
 
@@ -5625,8 +5628,8 @@ async function exportSingleFile(idx) {
         showToast(data.message, 'success');
 
     } catch (error) {
-        statusEl.textContent = `导出失败: ${error.message}`;
-        showToast(`导出失败: ${error.message}`, 'error');
+        statusEl.textContent = `导出失败: ${escapeHtml(error.message)}`;
+        showToast(`导出失败: ${escapeHtml(error.message)}`, 'error');
     }
 }
 
@@ -5835,7 +5838,7 @@ async function loadTrimWaveform(filePath) {
         ctx.fillStyle = '#ff4757';
         ctx.font = '12px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(`波形加载失败: ${error.message}`, canvas.width / 2, canvas.height / 2);
+        ctx.fillText(`波形加载失败: ${escapeHtml(error.message)}`, canvas.width / 2, canvas.height / 2);
     }
 }
 
@@ -6212,9 +6215,9 @@ async function executeTrim() {
         statusEl.style.color = 'var(--success)';
         showToast(data.message, 'success');
     } catch (error) {
-        statusEl.textContent = `❌ ${error.message}`;
+        statusEl.textContent = `❌ ${escapeHtml(error.message)}`;
         statusEl.style.color = 'var(--error)';
-        showToast(`裁切失败: ${error.message}`, 'error');
+        showToast(`裁切失败: ${escapeHtml(error.message)}`, 'error');
     }
 }
 
@@ -6555,7 +6558,7 @@ function displayThumbnailResults(result) {
     resultSection.classList.remove('hidden');
 
     // 汇总信息
-    const escapedDir = result.output_dir.replace(/'/g, "\\'");
+    const escapedDir = escapeHtml(result.output_dir).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     summaryEl.innerHTML = `
         <div style="display: flex; gap: 24px; flex-wrap: wrap; align-items: center;">
             <div style="display: flex; flex-direction: column; align-items: center;">
@@ -6739,7 +6742,7 @@ function displayClassifyResults(result) {
 
     resultSection.classList.remove('hidden');
 
-    const escapedDir = result.output_dir.replace(/'/g, "\\'");
+    const escapedDir = escapeHtml(result.output_dir).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
     summaryEl.innerHTML = `
         <div style="display: flex; gap: 20px; flex-wrap: wrap; align-items: center;">
             <div style="display: flex; flex-direction: column; align-items: center;">
@@ -6891,7 +6894,7 @@ async function checkLipSyncEnv() {
             detailEl.style.display = 'block';
         }
     } catch (error) {
-        statusEl.textContent = `❌ 检测失败: ${error.message}`;
+        statusEl.textContent = `❌ 检测失败: ${escapeHtml(error.message)}`;
         statusEl.style.color = '#f87171';
         detailEl.style.display = 'none';
     }
@@ -6985,10 +6988,10 @@ async function startLipSync() {
             throw new Error(result.error || '处理失败');
         }
     } catch (error) {
-        statusEl.textContent = `❌ ${error.message}`;
+        statusEl.textContent = `❌ ${escapeHtml(error.message)}`;
         statusEl.style.color = '#f87171';
-        progressText.textContent = `❌ 失败: ${error.message}`;
-        showToast(`口型同步失败: ${error.message}`, 'error');
+        progressText.textContent = `❌ 失败: ${escapeHtml(error.message)}`;
+        showToast(`口型同步失败: ${escapeHtml(error.message)}`, 'error');
     } finally {
         startBtn.disabled = false;
         startBtn.textContent = '🗣️ 开始口型同步';
@@ -7103,7 +7106,7 @@ async function loadBatchCutVideoInfo(filePath) {
             infoEl.innerHTML = '⚠️ 无法获取视频信息';
         }
     } catch (e) {
-        infoEl.innerHTML = `❌ ${e.message}`;
+        infoEl.innerHTML = `❌ ${escapeHtml(e.message)}`;
     }
 }
 
@@ -7149,8 +7152,8 @@ function batchCutPreviewSegment(index) {
     // 设置视频源（只在路径变化时重新加载）
     if (batchCutPreviewSrc !== batchCutFilePath) {
         batchCutPreviewSrc = batchCutFilePath;
-        videoIn.src = videoSrc;
-        videoOut.src = videoSrc;
+        videoIn.src = videoSrc.replace(/[<>"]/g, '');
+        videoOut.src = videoSrc.replace(/[<>"]/g, '');
         videoIn.onerror = () => {
             console.warn('Preview IN video load error:', videoIn.error?.message, videoSrc);
             showToast('入点预览加载失败，请检查文件路径/编码', 'error');
@@ -8172,10 +8175,10 @@ async function startBatchCut() {
             openBatchCutOutputDir();
         }
     } catch (error) {
-        statusEl.textContent = `❌ ${error.message}`;
+        statusEl.textContent = `❌ ${escapeHtml(error.message)}`;
         statusEl.style.color = 'var(--error)';
-        progressText.textContent = `❌ 失败: ${error.message}`;
-        showToast(`批量剪辑失败: ${error.message}`, 'error');
+        progressText.textContent = `❌ 失败: ${escapeHtml(error.message)}`;
+        showToast(`批量剪辑失败: ${escapeHtml(error.message)}`, 'error');
     } finally {
         startBtn.disabled = false;
         startBtn.textContent = '🎞️ 开始批量剪辑';
@@ -8304,7 +8307,7 @@ async function openBatchCutOutputDir() {
             body: JSON.stringify({ path: dir })
         });
     } catch (e) {
-        showToast(`打开目录失败: ${e.message}`, 'error');
+        showToast(`打开目录失败: ${escapeHtml(e.message)}`, 'error');
     }
 }
 

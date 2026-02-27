@@ -33,8 +33,9 @@ function registerAPIHandlers() {
             const result = await routeAPI(endpoint, data || {});
             return { success: true, data: result };
         } catch (error) {
-            console.error(`[API Error] ${endpoint}:`, error.message);
-            return { success: false, error: error.message };
+            const safeObj = error.message ? error.message.replace(/sk_[a-zA-Z0-9]{32,}/g, 'sk_***') : 'Unknown error';
+            console.error(`[API Error] ${endpoint}:`, safeObj);
+            return { success: false, error: safeObj };
         }
     });
 
@@ -44,8 +45,9 @@ function registerAPIHandlers() {
             const result = await routeUpload(endpoint, fileBuffer, fileName, formData || {});
             return { success: true, data: result };
         } catch (error) {
-            console.error(`[Upload Error] ${endpoint}:`, error.message);
-            return { success: false, error: error.message };
+            const safeObj = error.message ? error.message.replace(/sk_[a-zA-Z0-9]{32,}/g, 'sk_***') : 'Unknown error';
+            console.error(`[Upload Error] ${endpoint}:`, safeObj);
+            return { success: false, error: safeObj };
         }
     });
 }

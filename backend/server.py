@@ -3062,10 +3062,12 @@ def scene_detect():
         # 使用 FFmpeg select 滤镜检测场景变化
         # select='gt(scene,THRESHOLD)' 检测场景变化分数大于阈值的帧
         # 输出每一帧的时间戳和场景分数
+        # Sanitize threshold to a safe numeric string to prevent command injection
+        safe_threshold = str(float(threshold))
         cmd = [
             'ffmpeg', '-hide_banner',
             '-i', file_path,
-            '-vf', f"select='gt(scene,{threshold})',showinfo",
+            '-vf', "select='gt(scene," + safe_threshold + ")',showinfo",
             '-f', 'null', '-'
         ]
 
@@ -3262,10 +3264,12 @@ def scene_detect_frames():
         # --- 2) 场景检测 ---
         print(f"[场景帧] 开始场景检测: {file_path}, 阈值={threshold}, 最小间隔={min_interval}s, 每场景={frames_per_scene}帧")
 
+        # Sanitize threshold to a safe numeric string to prevent command injection
+        safe_threshold = str(float(threshold))
         cmd = [
             'ffmpeg', '-hide_banner',
             '-i', file_path,
-            '-vf', f"select='gt(scene,{threshold})',showinfo",
+            '-vf', "select='gt(scene," + safe_threshold + ")',showinfo",
             '-f', 'null', '-'
         ]
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -3318,7 +3322,10 @@ def scene_detect_frames():
         # --- 4) 输出目录 (validated) ---
         if not output_dir:
             output_dir = os.path.join(os.path.dirname(file_path), f"{base_name}_scene_frames")
+        # Sanitize output_dir: resolve to absolute path and block path traversal
         output_dir = os.path.realpath(output_dir)
+        if '..' in os.path.normpath(output_dir).split(os.sep):
+            return jsonify({"error": "无效的输出目录"}), 400
         os.makedirs(output_dir, exist_ok=True)
 
         # --- 5) 逐帧导出 ---
@@ -3337,14 +3344,18 @@ def scene_detect_frames():
             output_path = os.path.join(output_dir, output_filename)
 
             try:
+                # Sanitize time parameter to safe numeric string
+                safe_time = str(float(t))
                 cmd = [
                     'ffmpeg', '-y',
-                    '-ss', f'{t:.3f}',
+                    '-ss', safe_time,
                     '-i', file_path,
                     '-frames:v', '1'
                 ]
                 if out_ext == 'jpg':
-                    cmd.extend(['-q:v', str(quality)])
+                    # Sanitize quality to safe integer string
+                    safe_quality = str(int(float(quality)))
+                    cmd.extend(['-q:v', safe_quality])
                 cmd.append(output_path)
 
                 subprocess.run(cmd, check=True, capture_output=True, timeout=30)
@@ -3364,11 +3375,14 @@ def scene_detect_frames():
                 results.append({"scene": scene_idx, "frame": frame_idx, "index": idx + 1, "time": round(t, 3), "status": "timeout"})
             except subprocess.CalledProcessError as e:
                 failed += 1
+                # Log detailed error server-side only, don't expose to client
+                if e.stderr:
+                    print(f"[场景帧] FFmpeg error for scene {scene_idx}: {e.stderr.decode('utf-8', errors='replace')[:200]}")
                 results.append({
                     "scene": scene_idx, "frame": frame_idx, "index": idx + 1,
                     "time": round(t, 3),
                     "status": "error",
-                    "error": e.stderr.decode('utf-8', errors='replace')[:200] if e.stderr else str(e)
+                    "error": "帧导出失败"
                 })
 
             if (idx + 1) % 50 == 0 or (idx + 1) == total:
@@ -3394,7 +3408,7 @@ def scene_detect_frames():
 
         return jsonify({
             "message": f"场景帧导出完成: {num_scenes} 个场景 × {frames_per_scene} 帧，成功导出 {success} 帧",
-            "file": file_path,
+            "file": os.path.basename(file_path),
             "duration": round(duration, 3),
             "threshold": threshold,
             "frames_per_scene": frames_per_scene,

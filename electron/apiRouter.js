@@ -304,13 +304,29 @@ async function routeAPI(endpoint, data) {
             });
 
         case 'media/export-fcpxml-timeline': {
-            if (!data.file_path) throw new Error('缺少文件路径');
+            const isMultiVideo = data.multi_video === true;
+            if (!isMultiVideo && !data.file_path) throw new Error('缺少文件路径');
             if (!data.segments || data.segments.length === 0) throw new Error('缺少剪辑片段');
-            const outDir = data.output_dir || path.dirname(data.file_path);
-            const baseName = path.basename(data.file_path, path.extname(data.file_path));
+
+            // 多视频模式：为每个片段获取视频时长
+            if (isMultiVideo) {
+                for (const seg of data.segments) {
+                    if (seg.videoPath && !seg.videoDuration) {
+                        try {
+                            seg.videoDuration = await ffmpegService.getDuration(seg.videoPath);
+                        } catch (e) {
+                            console.warn(`获取视频时长失败: ${seg.videoPath}`, e.message);
+                        }
+                    }
+                }
+            }
+
+            const refPath = data.file_path || (data.segments[0]?.videoPath) || '';
+            const outDir = data.output_dir || (refPath ? path.dirname(refPath) : os.tmpdir());
+            const baseName = refPath ? path.basename(refPath, path.extname(refPath)) : 'multi_timeline';
             const fcpxmlPath = path.join(outDir, `${baseName}_timeline.fcpxml`);
             return fcpxmlService.segmentsToFcpxml(
-                data.file_path,
+                data.file_path || '',
                 data.segments,
                 data.duration || 0,
                 data.fps || 30,
@@ -393,6 +409,20 @@ async function routeAPI(endpoint, data) {
                         allResults.push({ error: e.message, file });
                     }
                 }
+            } else if (mode === 'watermark') {
+                // 文字水印
+                console.log('[Watermark Route] files:', files, 'outDir:', outDir);
+                for (const file of files) {
+                    try {
+                        const fileOutDir = outDir || path.dirname(file);
+                        fs.mkdirSync(fileOutDir, { recursive: true });
+                        const results = await ffmpegService.applyWatermark(file, fileOutDir, data.watermark || {});
+                        allResults.push(...results);
+                    } catch (e) {
+                        console.error('[Watermark Route] Error:', file, e.message);
+                        allResults.push({ error: e.message, file });
+                    }
+                }
             } else {
                 for (const file of files) {
                     try {
@@ -446,6 +476,102 @@ async function routeAPI(endpoint, data) {
             };
         }
 
+        case 'media/url-thumbnail': {
+            // 从视频链接批量截图：下载 → 截图 → 删除临时视频
+            if (!data.urls || data.urls.length === 0) throw new Error('缺少视频链接列表');
+            const outDir = data.output_dir || settingsService.getSecureTmpDir('url_thumbnails');
+            fs.mkdirSync(outDir, { recursive: true });
+
+            const format = data.format || 'jpg';
+            const quality = parseInt(data.quality || 2);
+            const mode = data.mode || 'first'; // 'first' | 'last'
+            const { BrowserWindow: BWThumb } = require('electron');
+            const winsThumb = BWThumb.getAllWindows();
+
+            const results = [];
+            for (let i = 0; i < data.urls.length; i++) {
+                const url = data.urls[i].trim();
+                if (!url) continue;
+
+                // 通知前端进度
+                for (const w of winsThumb) {
+                    try { w.webContents.send('url-thumbnail-progress', { index: i, total: data.urls.length, status: 'downloading', url }); } catch {}
+                }
+
+                let tmpVideoPath = null;
+                try {
+                    // 下载到临时目录（只下最低画质以加速）
+                    const tmpDir = settingsService.getSecureTmpDir('url_thumb_dl');
+                    fs.mkdirSync(tmpDir, { recursive: true });
+                    const dlResult = await ytdlpService.downloadVideo(url, {
+                        quality: 'worst',
+                        outputDir: tmpDir,
+                        outputTemplate: `thumb_${i}_%(id)s.%(ext)s`,
+                    });
+                    tmpVideoPath = dlResult.file_path || dlResult.output_path || null;
+
+                    // 兼容：如果没有 file_path，扫描 tmpDir 找最新文件
+                    if (!tmpVideoPath || !fs.existsSync(tmpVideoPath)) {
+                        const files = fs.readdirSync(tmpDir)
+                            .filter(f => f.startsWith(`thumb_${i}_`))
+                            .map(f => ({ f, mtime: fs.statSync(path.join(tmpDir, f)).mtimeMs }))
+                            .sort((a, b) => b.mtime - a.mtime);
+                        if (files.length > 0) tmpVideoPath = path.join(tmpDir, files[0].f);
+                    }
+
+                    if (!tmpVideoPath || !fs.existsSync(tmpVideoPath)) throw new Error('下载后找不到视频文件');
+
+                    // 通知进度：截图中
+                    for (const w of winsThumb) {
+                        try { w.webContents.send('url-thumbnail-progress', { index: i, total: data.urls.length, status: 'screenshotting', url }); } catch {}
+                    }
+
+                    // FFmpeg 截图
+                    const baseName = path.basename(tmpVideoPath, path.extname(tmpVideoPath));
+                    const outName = `${baseName}.${format}`;
+                    const outPath = path.join(outDir, outName);
+
+                    let ffmpegArgs;
+                    if (mode === 'last') {
+                        const dur = await ffmpegService.getDuration(tmpVideoPath);
+                        const seekTime = Math.max(0, dur - 0.5).toFixed(3);
+                        ffmpegArgs = ['-y', '-ss', seekTime, '-i', tmpVideoPath, '-vframes', '1'];
+                    } else {
+                        ffmpegArgs = ['-y', '-i', tmpVideoPath, '-vframes', '1', '-ss', '0'];
+                    }
+
+                    if (format === 'jpg') {
+                        ffmpegArgs.push('-qscale:v', String(quality));
+                    }
+                    ffmpegArgs.push(outPath);
+
+                    await ffmpegService.runCommand('ffmpeg', ffmpegArgs);
+                    results.push({ url, success: true, output: outPath });
+
+                } catch (e) {
+                    results.push({ url, success: false, error: e.message });
+                } finally {
+                    // 删除临时视频文件
+                    if (tmpVideoPath && fs.existsSync(tmpVideoPath)) {
+                        try { fs.unlinkSync(tmpVideoPath); } catch {}
+                    }
+                    // 通知进度：完成
+                    for (const w of winsThumb) {
+                        try { w.webContents.send('url-thumbnail-progress', { index: i, total: data.urls.length, status: 'done', url }); } catch {}
+                    }
+                }
+            }
+
+            const successCount = results.filter(r => r.success).length;
+            return {
+                message: `链接截图完成: ${successCount}/${results.length} 成功`,
+                results,
+                output_dir: outDir,
+                success: successCount,
+                failed: results.length - successCount,
+            };
+        }
+
         case 'media/smart-split':
             if (!data.file_path) throw new Error('缺少文件路径');
             return await ffmpegService.smartSplitAnalyze(data.file_path, data.max_duration || 29);
@@ -480,7 +606,7 @@ async function routeAPI(endpoint, data) {
 
             // 构建日志路径
             const fileName = path.parse(audioPath).name;
-            const logDir = settingsService.getSecureTmpDir('pymediatools_log');
+            const logDir = settingsService.getSecureTmpDir('videokit_log');
             fs.mkdirSync(logDir, { recursive: true });
             const jsonPath = path.join(logDir, `${currentLanguage}_${fileName}_audio_text_whittime.json`);
             const txtPath = path.join(logDir, `${currentLanguage}_${fileName}_finally.txt`);
@@ -773,7 +899,7 @@ async function routeUpload(endpoint, fileBuffer, fileName, formData) {
 
                 // 构建日志路径
                 const baseName = path.parse(fileName).name;
-                const logDir = settingsService.getSecureTmpDir('pymediatools_log');
+                const logDir = settingsService.getSecureTmpDir('videokit_log');
                 fs.mkdirSync(logDir, { recursive: true });
                 const jsonPath = path.join(logDir, `${currentLanguage}_${baseName}_audio_text_whittime.json`);
                 const txtPath = path.join(logDir, `${currentLanguage}_${baseName}_finally.txt`);

@@ -1,5 +1,9 @@
 {
+  "api_key": "sk_1fa1221c70947ebd5cc8d3bbd9a230a02ff54ef9d6bb4f21",
   "api_keys": [
-    "test_key"
+    "sk_1fa1221c70947ebd5cc8d3bbd9a230a02ff54ef9d6bb4f21"
+  ],
+  "keys_with_status": [
+    "sk_1fa1221c70947ebd5cc8d3bbd9a230a02ff54ef9d6bb4f21"
   ]
 }

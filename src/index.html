@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>pyMediaTools - 统一媒体工具包</title>
+  <title>VideoKit - 视频工具包</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 
@@ -12,7 +12,7 @@
   <div class="app">
     <!-- 标题栏 (极简单行布局) -->
     <header class="titlebar">
-      <h1 class="app-title">pyMediaTools</h1>
+      <h1 class="app-title">VideoKit</h1>
       <!-- 标签页 -->
       <nav class="tabs">
         <button class="tab active" data-tab="voiceover-workflow">🚀 一键配音字幕</button>
@@ -108,15 +108,16 @@
             <div class="params-grid">
               <div class="param-row">
                 <label>选择语言:</label>
-                <select id="language" class="select">
-                  <option value="英语">英语</option>
-                  <option value="中文">中文</option>
-                  <option value="日语">日语</option>
-                  <option value="韩语">韩语</option>
-                  <option value="德语">德语</option>
-                  <option value="法语">法语</option>
-                  <option value="西班牙语">西班牙语</option>
-                </select>
+                <div style="position:relative;display:inline-block;" id="subtitle-lang-picker-wrap">
+                  <button id="subtitle-lang-picker-btn" class="select" style="min-width:140px;text-align:left;cursor:pointer;display:flex;justify-content:space-between;align-items:center;">
+                    <span>英语</span><span style="font-size:10px;opacity:0.6;">▾</span>
+                  </button>
+                  <input type="hidden" id="language" value="英语">
+                  <div id="subtitle-lang-dropdown" style="display:none;position:absolute;top:100%;left:0;z-index:9999;background:var(--bg-secondary, #1a1a2e);border:1px solid var(--border-color, #333);border-radius:8px;width:260px;max-height:360px;box-shadow:0 8px 24px rgba(0,0,0,0.5);overflow:hidden;margin-top:4px;">
+                    <input id="subtitle-lang-search" type="text" placeholder="🔍 搜索语言 (中文/English/代码)..." style="width:100%;box-sizing:border-box;padding:8px 12px;border:none;border-bottom:1px solid var(--border-color, #333);background:var(--bg-tertiary, #12122a);color:var(--text-primary, #ddd);font-size:13px;outline:none;">
+                    <div id="subtitle-lang-list" style="max-height:300px;overflow-y:auto;"></div>
+                  </div>
+                </div>
 
                 <label>音频切分时长(分钟):</label>
                 <input type="number" id="cut-length" class="input input-small" value="5.0" step="0.5" min="1">
@@ -750,6 +751,16 @@
                   <input type="number" id="audio-fx-stereo-width" class="input input-small" min="100" max="250" step="10" value="130" style="width: 80px; padding: 6px 8px;" title="100% 为原宽度，150% 为加宽">
                   <span style="font-size: 12px; color: var(--text-muted);">%</span>
                 </div>
+
+                <div style="display:flex;align-items:center;gap:6px; margin-left: 12px; border-left: 1px solid var(--border-color); padding-left: 12px;">
+                  <label style="font-size: 13px;">输出格式:</label>
+                  <select id="audio-fx-output-format" class="select" style="width: 90px;">
+                    <option value="mp3" selected>MP3</option>
+                    <option value="wav">WAV</option>
+                    <option value="flac">FLAC</option>
+                    <option value="m4a">M4A/AAC</option>
+                  </select>
+                </div>
               </div>
             </div>
 
@@ -958,6 +969,15 @@
 
           <!-- ========== 批量截图模块 ========== -->
           <div id="media-thumbnail-subtab" class="subtab-content">
+
+            <!-- 模式切换 -->
+            <div class="sub-tabs" style="margin-bottom: 16px;">
+              <button class="sub-tab active" id="thumb-mode-folder-btn" onclick="switchThumbnailMode('folder')">📁 本地文件夹</button>
+              <button class="sub-tab" id="thumb-mode-url-btn" onclick="switchThumbnailMode('url')">🔗 从链接截图</button>
+            </div>
+
+            <!-- ===== 本地文件夹模式 ===== -->
+            <div id="thumb-folder-mode">
             <!-- 文件夹选择 -->
             <div class="form-section">
               <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📁 选择视频文件夹（支持子文件夹递归扫描）</h4>
@@ -1047,6 +1067,82 @@
                 style="padding: 12px; background: var(--bg-tertiary); border-radius: 8px; margin-bottom: 12px;"></div>
               <div id="thumbnail-result-errors" style="max-height: 200px; overflow-y: auto;"></div>
             </div>
+            </div><!-- end thumb-folder-mode -->
+
+            <!-- ===== 链接截图模式 ===== -->
+            <div id="thumb-url-mode" style="display:none;">
+
+              <!-- 链接输入 -->
+              <div class="form-section">
+                <h4 style="margin-bottom: 8px; color: var(--text-secondary);">🔗 粘贴视频链接（每行一个）</h4>
+                <p class="hint" style="margin-bottom: 10px;">支持 Facebook、YouTube、Instagram、TikTok 等平台链接。</p>
+                <textarea id="url-thumb-links" class="textarea" rows="6"
+                  placeholder="https://www.facebook.com/video/...&#10;https://www.youtube.com/watch?v=...&#10;https://www.tiktok.com/@user/video/..."></textarea>
+                <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+                  <button class="btn btn-secondary" style="font-size:12px; padding:4px 10px;"
+                    onclick="document.getElementById('url-thumb-links').value=''">🧹 清空</button>
+                  <span id="url-thumb-count" style="font-size:12px; color:var(--text-muted); margin-left:auto; align-self:center;"></span>
+                </div>
+              </div>
+
+              <!-- 输出目录 -->
+              <div class="form-section">
+                <h4 style="margin-bottom: 8px; color: var(--text-secondary);">📤 保存截图到</h4>
+                <div class="file-input-group">
+                  <input type="text" id="url-thumb-output-path" class="input file-path"
+                    placeholder="默认保存到 ~/Downloads/url_thumbnails">
+                  <button class="btn btn-secondary" onclick="selectUrlThumbnailOutputDir()">选择目录</button>
+                </div>
+              </div>
+
+              <!-- 截图参数 -->
+              <div class="form-section">
+                <h4 style="margin-bottom: 8px; color: var(--text-secondary);">⚙️ 截图参数</h4>
+                <div class="param-row" style="flex-wrap:wrap; gap:12px;">
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <label>截图模式:</label>
+                    <select id="url-thumb-mode" class="select" style="width:120px;">
+                      <option value="first" selected>📸 首帧</option>
+                      <option value="last">🔚 尾帧</option>
+                    </select>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    <label>图片格式:</label>
+                    <select id="url-thumb-format" class="select" style="width:100px;">
+                      <option value="jpg">JPG</option>
+                      <option value="png" selected>PNG</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 操作按钮 -->
+              <div class="form-section" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                <button id="url-thumb-start-btn" class="btn btn-primary" onclick="startUrlThumbnail()" style="min-width:160px;">
+                  🔗 开始链接截图
+                </button>
+                <button class="btn btn-secondary" onclick="openUrlThumbnailOutputDir()" style="font-size:12px; padding:6px 12px;">
+                  📁 打开输出目录
+                </button>
+                <span id="url-thumb-status" class="status-text" style="font-size:13px;">就绪</span>
+              </div>
+
+              <!-- 实时进度列表 -->
+              <div id="url-thumb-progress-list" class="form-section" style="display:none;">
+                <h4 style="margin-bottom:10px; color:var(--text-secondary);">📋 处理进度</h4>
+                <div id="url-thumb-items" style="display:flex; flex-direction:column; gap:6px; max-height:300px; overflow-y:auto;"></div>
+              </div>
+
+              <!-- 结果展示 -->
+              <div id="url-thumb-result-section" class="form-section hidden">
+                <h4 style="margin-bottom:10px; color:var(--text-secondary);">✅ 截图结果</h4>
+                <div id="url-thumb-result-summary" style="padding:12px; background:var(--bg-tertiary); border-radius:8px; margin-bottom:10px;"></div>
+                <div id="url-thumb-result-grid"
+                  style="display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:10px; max-height:400px; overflow-y:auto;"></div>
+              </div>
+
+            </div><!-- end thumb-url-mode -->
+
           </div>
 
           <!-- ========== 画面分类模块 ========== -->
@@ -1252,8 +1348,36 @@
 
           <!-- ========== 批量剪辑模块 ========== -->
           <div id="media-batchcut-subtab" class="subtab-content">
-            <!-- 视频文件选择 -->
-            <div class="form-section">
+            <!-- 模式切换 -->
+            <div class="form-section" style="padding-bottom: 4px;">
+              <label class="checkbox-label" style="cursor: pointer; font-size: 13px;">
+                <input type="checkbox" id="batchcut-multi-mode" onchange="toggleBatchCutMultiMode()">
+                <span>📁 <strong>多视频模式</strong> — 每个文案对应一个完整视频，无需设置时间点</span>
+              </label>
+            </div>
+
+            <!-- 多视频文件选择（默认隐藏） -->
+            <div id="batchcut-multi-section" class="form-section" style="display: none;">
+              <h4 style="margin-bottom: 12px; color: var(--text-secondary);">📁 选择多个视频文件</h4>
+              <div class="file-input-group" id="batchcut-multi-drop-zone"
+                style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 16px; transition: all 0.2s; min-height: 60px;">
+                <input type="file" id="batchcut-multi-input" class="hidden-file-input" multiple
+                  accept=".mp4,.mov,.mkv,.avi,.wmv,.flv,.webm,.m4v">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                  <button class="btn btn-secondary"
+                    onclick="document.getElementById('batchcut-multi-input').click()">📁 选择多个视频</button>
+                  <button class="btn btn-secondary" onclick="batchCutMultiSelectFolder()"
+                    style="padding: 4px 10px; font-size: 12px;">📂 选择文件夹</button>
+                  <span class="hint">或直接拖拽多个视频文件到此区域（自动按文件名排序）</span>
+                </div>
+              </div>
+              <p class="hint" style="margin-top: 6px;">
+                支持 MP4, MOV, MKV, AVI 等。添加视频后，在字幕列中填写每个视频对应的文案即可。
+              </p>
+            </div>
+
+            <!-- 单视频文件选择 -->
+            <div id="batchcut-single-section" class="form-section">
               <h4 style="margin-bottom: 12px; color: var(--text-secondary);">🎬 选择要剪辑的视频文件</h4>
               <div class="file-input-group" id="batchcut-drop-zone"
                 style="border: 2px dashed var(--border-color); border-radius: 8px; padding: 12px; transition: all 0.2s;">
@@ -1324,26 +1448,22 @@
             <div class="form-section">
               <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap;">
                 <h4 style="margin: 0; color: var(--text-secondary);">📋 剪辑片段列表</h4>
-                <button class="btn btn-secondary" onclick="batchCutAddRow()"
-                  style="padding: 4px 10px; font-size: 12px;">
-                  ➕ 添加行
-                </button>
-                <button class="btn btn-secondary" onclick="batchCutPasteFromText()"
-                  style="padding: 4px 10px; font-size: 12px;" title="粘贴入出点（格式：名称 入点 出点，每行一个）">
-                  📋 粘贴入出点
-                </button>
-                <button class="btn btn-secondary" onclick="batchCutPasteYouTubeTimestamps()"
-                  style="padding: 4px 10px; font-size: 12px;" title="粘贴YouTube时间戳（格式：时间 名称，每行一个，自动生成片段）">
-                  📺 YouTube时间戳
-                </button>
-                <button class="btn btn-secondary" onclick="batchCutPasteTable()"
-                  style="padding: 4px 10px; font-size: 12px;" title="从 Excel / Google Sheets 粘贴表格数据">
-                  📊 表格模式
-                </button>
+                <span id="batchcut-single-toolbar">
+                  <button class="btn btn-secondary" onclick="batchCutAddRow()"
+                    style="padding: 4px 10px; font-size: 12px;">➕ 添加行</button>
+                  <button class="btn btn-secondary" onclick="batchCutPasteFromText()"
+                    style="padding: 4px 10px; font-size: 12px;" title="粘贴入出点（格式：名称 入点 出点，每行一个）">📋 粘贴入出点</button>
+                  <button class="btn btn-secondary" onclick="batchCutPasteYouTubeTimestamps()"
+                    style="padding: 4px 10px; font-size: 12px;" title="粘贴YouTube时间戳">📺 YouTube时间戳</button>
+                  <button class="btn btn-secondary" onclick="batchCutPasteTable()"
+                    style="padding: 4px 10px; font-size: 12px;" title="从 Excel / Google Sheets 粘贴表格数据">📊 表格模式</button>
+                </span>
+                <span id="batchcut-multi-toolbar" style="display: none;">
+                  <button class="btn btn-secondary" onclick="batchCutMultiPasteText()"
+                    style="padding: 4px 10px; font-size: 12px;" title="粘贴文案，每行一个，与视频一一对应">📋 粘贴文案</button>
+                </span>
                 <button class="btn btn-secondary" onclick="batchCutClearAll()"
-                  style="padding: 4px 10px; font-size: 12px;">
-                  🧹 清空
-                </button>
+                  style="padding: 4px 10px; font-size: 12px;">🧹 清空</button>
                 <span id="batchcut-segment-count"
                   style="font-size: 12px; color: var(--text-muted); margin-left: auto;">0 个片段</span>
               </div>
@@ -1359,26 +1479,28 @@
                 </p>
               </div>
 
-              <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
-                <span class="hint" style="margin: 0;">帧率（自动检测，用于 HH:MM:SS:FF 时码转换）:</span>
-                <select id="batchcut-fps"
-                  style="font-size: 12px; padding: 2px 6px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px;">
-                  <option value="25" selected>25 fps</option>
-                  <option value="24">24 fps</option>
-                  <option value="29.97">29.97 fps</option>
-                  <option value="30">30 fps</option>
-                  <option value="23.976">23.976 fps</option>
-                </select>
+              <div id="batchcut-time-hints">
+                <div style="display: flex; align-items: center; gap: 8px; margin-top: 8px;">
+                  <span class="hint" style="margin: 0;">帧率（自动检测，用于 HH:MM:SS:FF 时码转换）:</span>
+                  <select id="batchcut-fps"
+                    style="font-size: 12px; padding: 2px 6px; background: var(--bg-tertiary); color: var(--text-primary); border: 1px solid var(--border-color); border-radius: 4px;">
+                    <option value="25" selected>25 fps</option>
+                    <option value="24">24 fps</option>
+                    <option value="29.97">29.97 fps</option>
+                    <option value="30">30 fps</option>
+                    <option value="23.976">23.976 fps</option>
+                  </select>
+                </div>
+                <p class="hint" style="margin-top: 6px;">
+                  时间格式支持:
+                  <code>MM:SS</code>、<code>HH:MM:SS</code>、<code>HH:MM:SS.mmm</code>、<code>HH:MM:SS:FF</code>（NDF）、
+                  <code>HH:MM:SS;FF</code>（DF）或纯秒数。留空「结束时间」表示到视频结尾。
+                </p>
               </div>
-              <p class="hint" style="margin-top: 6px;">
-                时间格式支持:
-                <code>MM:SS</code>、<code>HH:MM:SS</code>、<code>HH:MM:SS.mmm</code>、<code>HH:MM:SS:FF</code>（NDF）、
-                <code>HH:MM:SS;FF</code>（DF）或纯秒数。留空「结束时间」表示到视频结尾。
-              </p>
             </div>
 
             <!-- 剪辑选项 -->
-            <div class="form-section">
+            <div class="form-section" id="batchcut-cut-options">
               <h4 style="margin-bottom: 12px; color: var(--text-secondary);">⚙️ 剪辑选项</h4>
               <div class="checkbox-row">
                 <label class="checkbox-label">
@@ -1837,7 +1959,7 @@
             <div class="param-row" style="flex-wrap: wrap; gap: 12px; margin-top: 12px;">
               <div style="display: flex; align-items: center; gap: 6px;">
                 <label>默认音色:</label>
-                <select id="vw-default-voice" class="select" style="width: 200px;">
+                <select id="vw-default-voice" class="select" style="width: 320px;">
                   <option value="">请先刷新...</option>
                 </select>
                 <button class="btn btn-secondary" onclick="refreshVWVoices()">🔄</button>
@@ -2862,14 +2984,17 @@
               <summary
                 style="cursor:pointer; font-size:12px; font-weight:bold; color:var(--text-secondary); user-select:none;">
                 🚀 导出设置 <span id="reels-export-status" style="font-weight:normal;margin-left:8px;">就绪</span></summary>
-              <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:8px; font-size:12px;">
+              <!-- ── 行1: 文件 & 输出 ── -->
+              <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:12px; padding:6px 0 4px; border-bottom:1px solid var(--border-color);">
+                <span style="font-size:10px; color:var(--text-muted); min-width:32px;">📁</span>
                 <label>目录:</label>
                 <input type="text" id="reels-output-dir" class="input file-path" placeholder="输出目录" readonly
-                  style="width:180px;font-size:11px;">
+                  style="width:200px;font-size:11px;">
                 <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;"
                   onclick="reelsSelectOutputDir()">选择</button>
                 <button class="btn btn-secondary" style="font-size:11px;padding:3px 8px;"
                   onclick="reelsOpenOutputDir()">打开目录</button>
+                <span style="width:1px;height:16px;background:var(--border-color);margin:0 4px;display:inline-block;"></span>
                 <label>画质:</label>
                 <select id="reels-quality" class="select" style="width:80px;font-size:11px;">
                   <option value="high" selected>高质量</option>
@@ -2878,66 +3003,96 @@
                 </select>
                 <label>后缀:</label>
                 <input type="text" id="reels-suffix" class="input input-small" value="_subtitled"
-                  style="width:80px;font-size:11px;">
-                <label>配音音量:</label>
-                <input type="number" id="reels-voice-volume" class="input input-small" min="0" max="200" step="1"
-                  value="100" style="width:58px;font-size:11px;">
-                <span style="font-size:11px;color:var(--text-secondary);">%</span>
-                <label>背景音量:</label>
-                <input type="number" id="reels-bg-volume" class="input input-small" min="0" max="200" step="1"
-                  value="5" style="width:58px;font-size:11px;">
-                <span style="font-size:11px;color:var(--text-secondary);">%</span>
+                  style="width:90px;font-size:11px;">
+                <span style="width:1px;height:16px;background:var(--border-color);margin:0 4px;display:inline-block;"></span>
                 <label style="display:flex;align-items:center;gap:4px;">
                   输出时长:
                   <input type="number" id="reels-custom-duration" class="input input-small" min="0" max="600" step="0.5"
-                    value="" placeholder="自动" style="width:58px;font-size:11px;" title="留空=自动跟随音频/视频时长，输入数字=自定义秒数">
+                    value="" placeholder="自动" style="width:58px;font-size:11px;" title="留空=自动跟随音频时长，输入数字=自定义秒数">
                   <span style="font-size:11px;color:var(--text-secondary);">s</span>
                 </label>
-                <label style="display:flex;align-items:center;gap:3px;"><input type="checkbox" id="reels-use-gpu" checked>
-                  ⚡GPU</label>
-                <label style="display:flex;align-items:center;gap:3px;">
-                  <input type="checkbox" id="reels-loop-fade" checked>
-                  循环透明过渡
+                <label style="display:flex;align-items:center;gap:3px;"><input type="checkbox" id="reels-use-gpu" checked>⚡GPU</label>
+              </div>
+
+              <!-- ── 行2: 音量控制 ── -->
+              <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; font-size:12px; padding:5px 0 4px; border-bottom:1px solid var(--border-color);">
+                <span style="font-size:10px; color:var(--text-muted); min-width:32px;">🔉</span>
+                <label>人声音频层:</label>
+                <input type="number" id="reels-voice-volume" class="input input-small" min="0" max="200" step="1"
+                  value="100" style="width:52px;font-size:11px;">
+                <span style="font-size:11px;color:var(--text-secondary);">%</span>
+                <label style="margin-left:6px;">视频背景层:</label>
+                <input type="number" id="reels-bg-volume" class="input input-small" min="0" max="200" step="1"
+                  value="5" style="width:52px;font-size:11px;">
+                <span style="font-size:11px;color:var(--text-secondary);">%</span>
+              </div>
+
+              <!-- ── 行3: 音频特效 ── -->
+              <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; font-size:12px; padding:6px 0 5px; border-bottom:1px solid var(--border-color);">
+                <span style="font-size:10px; color:var(--text-muted); min-width:24px;">🎛️</span>
+                <label style="display:flex;align-items:center;gap:4px;white-space:nowrap;">
+                  <input type="checkbox" id="reels-reverb-enabled">🔊 混响
                 </label>
-                <label style="display:flex;align-items:center;gap:4px;">
-                  过渡时长:
-                  <input type="number" id="reels-loop-fade-dur" class="input input-small" min="0.1" max="3" step="0.1"
-                    value="1" style="width:56px;font-size:11px;">
-                  s
-                </label>
-                <label style="display:flex;align-items:center;gap:3px;"><input type="checkbox" id="reels-reverb-enabled">
-                  🔊混响</label>
-                <select id="reels-reverb-preset" class="select" style="width:72px;font-size:11px;">
+                <select id="reels-reverb-preset" class="select" style="width:80px;font-size:11px;">
                   <option value="room">小房间</option>
                   <option value="hall" selected>大厅</option>
                   <option value="church">教堂</option>
                   <option value="plate">板式混响</option>
                   <option value="echo">回声</option>
                 </select>
-                <label style="display:flex;align-items:center;gap:3px;font-size:11px;">
+                <label style="display:flex;align-items:center;gap:6px;font-size:11px;white-space:nowrap;">
                   混响量:
                   <input type="number" id="reels-reverb-mix" class="input input-small" min="0" max="100" step="5"
                     value="30" style="width:48px;font-size:11px;">%
                 </label>
-                <label style="display:flex;align-items:center;gap:3px;font-size:11px;">
+                <span style="width:1px;height:16px;background:var(--border-color);display:inline-block;"></span>
+                <label style="display:flex;align-items:center;gap:6px;font-size:11px;white-space:nowrap;">
                   立体声:
                   <input type="number" id="reels-stereo-width" class="input input-small" min="0" max="200" step="10"
                     value="100" style="width:48px;font-size:11px;">%
                 </label>
-                <label>前置:</label>
+                <span style="width:1px;height:16px;background:var(--border-color);display:inline-block;"></span>
+                <label style="display:flex;align-items:center;gap:6px;font-size:11px;white-space:nowrap;">
+                  特效加于:
+                  <select id="reels-audio-fx-target" class="select select-small" style="width:110px; font-size:11px; padding:2px;">
+                    <option value="all">默认(优先原声)</option>
+                    <option value="voice">人声音频层</option>
+                    <option value="bg">视频背景层</option>
+                    <option value="bgm">配乐层</option>
+                  </select>
+                </label>
+              </div>
+
+              <!-- ── 行4: 视频 & 操作 ── -->
+              <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; font-size:12px; padding:6px 0 2px;">
+                <span style="font-size:10px; color:var(--text-muted); min-width:24px;">✨</span>
+                <label style="display:flex;align-items:center;gap:4px;white-space:nowrap;">
+                  <input type="checkbox" id="reels-loop-fade" checked>循环透明过渡
+                </label>
+                <label style="display:flex;align-items:center;gap:6px;white-space:nowrap;">
+                  过渡时长:
+                  <input type="number" id="reels-loop-fade-dur" class="input input-small" min="0.1" max="3" step="0.1"
+                    value="1" style="width:48px;font-size:11px;">s
+                </label>
+                <span style="width:1px;height:16px;background:var(--border-color);display:inline-block;"></span>
+                <!-- 前置 -->
+                <label style="white-space:nowrap;">前置:</label>
                 <input type="text" id="reels-intro-path" class="input file-path" placeholder="可选" readonly
                   style="width:140px;font-size:11px;">
-                <button class="btn btn-secondary" style="font-size:10px;padding:2px 6px;"
-                  onclick="reelsSelectIntro()">选择</button>
-                <button class="btn btn-secondary" style="font-size:10px;padding:2px 6px;"
-                  onclick="document.getElementById('reels-intro-path').value=''">清除</button>
+                <div style="display:flex; gap:4px;">
+                  <button class="btn btn-secondary" style="font-size:10px;padding:2px 6px;"
+                    onclick="reelsSelectIntro()">选择</button>
+                  <button class="btn btn-secondary" style="font-size:10px;padding:2px 6px;"
+                    onclick="document.getElementById('reels-intro-path').value=''">清除</button>
+                </div>
+                <!-- 导出按钮推到右端 -->
                 <span style="flex:1;"></span>
-                <button id="reels-export-btn" class="btn btn-primary" style="font-size:12px;padding:6px 16px;"
+                <button id="reels-export-btn" class="btn btn-primary" style="font-size:12px;padding:6px 18px;white-space:nowrap;"
                   onclick="reelsStartExport()">🚀 开始导出</button>
-                <button class="btn btn-secondary" style="font-size:11px;padding:4px 8px;"
-                  onclick="reelsCancelExport()">⏹
-                  取消</button>
+                <button class="btn btn-secondary" style="font-size:11px;padding:4px 8px;white-space:nowrap;"
+                  onclick="reelsCancelExport()">⏹ 取消</button>
               </div>
+
               <div id="reels-export-progress" class="progress-bar hidden" style="margin-top:6px;">
                 <div id="reels-export-progress-inner" class="progress-bar-inner"></div>
               </div>
@@ -2992,8 +3147,8 @@
           <div class="form-section">
             <h3 class="section-title">关于</h3>
             <div class="about-info">
-              <p><strong>pyMediaTools Unified</strong> <span id="app-version-display">v2.0.0</span></p>
-              <p>统一媒体工具包 - 整合字幕对齐、媒体转换、TTS等功能</p>
+              <p><strong>VideoKit</strong> <span id="app-version-display">v2.0.0</span></p>
+              <p>视频工具包-批量：音频生成-reels视频制作-多媒体转换</p>
               <div style="margin-top: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
                 <button id="check-update-btn" class="btn btn-secondary" onclick="checkAppUpdate()"
                   style="font-size: 12px; padding: 6px 14px;">🔄 检查更新</button>
@@ -3167,7 +3322,7 @@
       </div>
 
       <!-- 模式切换 -->
-      <div style="display: flex; gap: 0; border-bottom: 1px solid var(--border-color);">
+      <div id="paste-mode-tabs" style="display: flex; gap: 0; border-bottom: 1px solid var(--border-color);">
         <button id="paste-mode-inout" class="btn" onclick="switchPasteMode('inout')"
           style="flex: 1; padding: 10px; border-radius: 0; border: none; border-bottom: 2px solid var(--accent); font-size: 13px; font-weight: 600; background: transparent; color: var(--accent); cursor: pointer;">
           📋 入出点模式
@@ -3244,6 +3399,25 @@
               揭晓第四名 18:44—24:24 (忽略) THE HOLY THIS IS NO</div>
             <div style="margin-top: 6px; color: var(--text-muted); font-size: 11px;">
               💡 粘贴后系统自动检测列映射。不需要的列（如「封面标题」）会自动归入字幕列，可在导入后手动删除。
+            </div>
+          </div>
+        </div>
+
+        <!-- 格式说明 - 多视频文案模式 -->
+        <div id="paste-help-multi" style="display: none;">
+          <div
+            style="padding: 10px 14px; background: var(--bg-tertiary); border-radius: 8px; margin-bottom: 12px; font-size: 12px; line-height: 1.8;">
+            <div style="font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">📋 粘贴文案（多视频模式）</div>
+            <div style="color: var(--text-muted);">
+              从 Excel / Google Sheets 复制多列文案，或直接粘贴纯文本（每行一个）<br>
+              所有列均作为<strong>字幕列</strong>，按行顺序与视频一一对应
+            </div>
+            <div
+              style="margin-top: 8px; padding: 8px 10px; background: var(--bg-primary); border-radius: 6px; font-family: monospace; color: var(--text-primary); white-space: pre; line-height: 1.6; font-size: 11px;">标题字幕	内容字幕
+GOD LET YOU	If you're reading this...
+THE HOLY	This is no coincidence...</div>
+            <div style="margin-top: 6px; color: var(--text-muted); font-size: 11px;">
+              💡 也可以粘贴纯文本（每行一个），自动填充到第一个字幕列。
             </div>
           </div>
         </div>

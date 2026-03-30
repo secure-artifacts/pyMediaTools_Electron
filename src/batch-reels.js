@@ -29,6 +29,10 @@ const _reelsState = {
     // Overlay interaction state
     overlaySelectedId: null,
     overlayDrag: null,        // { ovId, startX, startY, origX, origY, handle: null|'tl'|'tr'|'bl'|'br'|... }
+    // Mock play state for items without media
+    mockPlaying: false,
+    mockPausedTime: 0,
+    mockStartTime: 0,
     // AI watermarks
     watermarks: [],
 };
@@ -162,7 +166,7 @@ function _initReelsModule() {
     bindMix(bgVolumeEl);
 
     // ── 混响 / 立体声控件 ──
-    const reverbIds = ['reels-reverb-enabled', 'reels-reverb-preset', 'reels-reverb-mix', 'reels-stereo-width'];
+    const reverbIds = ['reels-reverb-enabled', 'reels-reverb-preset', 'reels-reverb-mix', 'reels-stereo-width', 'reels-audio-fx-target'];
     for (const rid of reverbIds) {
         const el = document.getElementById(rid);
         if (el) {
@@ -1284,13 +1288,16 @@ function reelsUpdatePreview() {
         _reelsState._lastVideoDebugTime = Date.now();
     }
 
+    const _selectedTask = _getSelectedTask();
+    const _bgScalePct = _selectedTask ? (_selectedTask.bgScale || 100) : 100;
+
     if (video && video.src && video.readyState >= 1 && video.videoWidth > 0) {
-        _drawVideoCover(ctx, video, w, h);
+        _drawVideoCover(ctx, video, w, h, _bgScalePct);
         const fadeFrame = _calcPreviewLoopFadeFrame();
         if (fadeFrame && fadeFrame.video && fadeFrame.video.readyState >= 2) {
             ctx.save();
             ctx.globalAlpha = fadeFrame.alpha;
-            _drawVideoCover(ctx, fadeFrame.video, w, h);
+            _drawVideoCover(ctx, fadeFrame.video, w, h, _bgScalePct);
             ctx.restore();
         }
 
@@ -1304,7 +1311,7 @@ function reelsUpdatePreview() {
         }
     } else if (hasBgImg) {
         // Draw image background using cover mode
-        _drawVideoCover(ctx, bgImg, w, h);
+        _drawVideoCover(ctx, bgImg, w, h, _bgScalePct);
 
         // Draw global mask if enabled
         if (style.global_mask_enabled) {
@@ -1344,21 +1351,17 @@ function reelsUpdatePreview() {
 
     let cycleTime = _getPreviewCurrentTime();
     if (!(cycleTime > 0)) {
-        const now = performance.now() / 1000;
-        const selectedTask = _reelsState.selectedIdx >= 0 ? _reelsState.tasks[_reelsState.selectedIdx] : null;
-        const maxSegEnd = selectedTask && selectedTask.segments && selectedTask.segments.length > 0
-            ? selectedTask.segments[selectedTask.segments.length - 1].end || 0
-            : 0;
+        // 检查是否有媒体正在播放
+        const video = document.getElementById('reels-preview-video');
+        const audio = document.getElementById('reels-preview-audio');
+        const isMediaPlaying = (video && !video.paused) || (audio && !audio.paused);
 
-        if (maxSegEnd > 0) {
-            const period = Math.max(maxSegEnd, maxOverlayEnd);
-            cycleTime = now % period;
+        if (isMediaPlaying) {
+            // 媒体正在播放但 currentTime 尚为0，等下一帧
+            cycleTime = 0;
         } else {
-            const demoWords = previewText.split(/\s+/).filter(Boolean);
-            const wordCount = demoWords.length || 1;
-            const totalDur = Math.max(3, wordCount * 0.6);
-            const period = Math.max(totalDur + 1.0, maxOverlayEnd + 1.0);
-            cycleTime = now % period;
+            // 没有媒体在播放 → 静止在 time=0 (不再自动循环)
+            cycleTime = 0;
         }
     }
 
@@ -1425,8 +1428,38 @@ function reelsUpdatePreview() {
     _drawWatermarks(ctx, w, h);
 
     // ── 更新时间显示 (覆层预览时间) ──
-    if (!_getPreviewCurrentTime()) {
-        _updatePreviewTimeUI(cycleTime, maxOverlayEnd || totalDur);
+    const dDur = _getPreviewDuration();
+    const cTime = _getPreviewCurrentTime();
+
+    // 如果没有真实的媒体元素，渲染循环必须主动驱动时间轴和 UI 的更新 (没有 timeupdate 事件)
+    if (!_getPreviewMasterElement()) {
+        _updatePreviewTimeUI(cTime, dDur);
+    } else if (!cTime) {
+        _updatePreviewTimeUI(0, dDur);
+    }
+
+    // 检查是否到达终点以自动停止
+    if (dDur > 0 && cTime >= dDur) {
+        // Reached the end
+        const video = document.getElementById('reels-preview-video');
+        const audio = document.getElementById('reels-preview-audio');
+        const fadeVideo = _reelsState.previewFadeVideo;
+        const btn = document.getElementById('reels-preview-play');
+        
+        // Only force pause if it wasn't already manually paused to avoid spamming
+        const isPlaying = (audio && !audio.paused) || (video && !video.paused) || _reelsState.mockPlaying;
+        if (isPlaying) {
+            if (audio) audio.pause();
+            if (video) video.pause();
+            if (fadeVideo) fadeVideo.pause();
+            if (_reelsState._bgmAudioEl) _reelsState._bgmAudioEl.pause();
+            
+            _reelsState.mockPlaying = false;
+            _reelsState.mockPausedTime = dDur; // Ensure UI stays at the end
+            if (btn) btn.textContent = '▶️';
+            // 确保进度条刚好停在满格位置
+            _updatePreviewTimeUI(dDur, dDur);
+        }
     }
 
     if (_reelsState.previewRAF) cancelAnimationFrame(_reelsState.previewRAF);
@@ -1587,7 +1620,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 500);
 });
 
-function _drawVideoCover(ctx, videoEl, targetW, targetH) {
+function _drawVideoCover(ctx, videoEl, targetW, targetH, scalePct) {
     if (!ctx || !videoEl || !(targetW > 0) || !(targetH > 0)) return;
     const srcW = videoEl.videoWidth || videoEl.naturalWidth || targetW;
     const srcH = videoEl.videoHeight || videoEl.naturalHeight || targetH;
@@ -1595,7 +1628,8 @@ function _drawVideoCover(ctx, videoEl, targetW, targetH) {
         ctx.drawImage(videoEl, 0, 0, targetW, targetH);
         return;
     }
-    const scale = Math.max(targetW / srcW, targetH / srcH);
+    const userScale = (scalePct || 100) / 100;
+    const scale = Math.max(targetW / srcW, targetH / srcH) * userScale;
     const drawW = srcW * scale;
     const drawH = srcH * scale;
     const drawX = (targetW - drawW) / 2;
@@ -1638,15 +1672,31 @@ function _toPlayablePath(filePath, srcUrl = null) {
 
 function _getPreviewMasterElement() {
     const task = _getSelectedTask();
+    if (!task) return null;
     const audio = document.getElementById('reels-preview-audio');
-    if (task && task.audioPath && audio && audio.src && audio.readyState >= 1) return audio;
+    if (task.audioPath && audio && audio.src && audio.readyState >= 1) return audio;
     const video = document.getElementById('reels-preview-video');
-    return video || null;
+    const isVideo = task.bgPath && !_isImagePath(task.bgPath);
+    if (isVideo && video && video.src && video.readyState >= 1) return video;
+    const bgm = _reelsState._bgmAudioEl;
+    if (task.bgmPath && bgm && bgm.src && bgm.readyState >= 1) return bgm;
+    return null;
 }
 
 function _getPreviewCurrentTime() {
     const master = _getPreviewMasterElement();
-    return master ? (master.currentTime || 0) : 0;
+    if (master) {
+        const t = master.currentTime || 0;
+        // 变速时 currentTime 要按比例缩放以匹配 _getPreviewDuration 的缩放后时长
+        const task = _getSelectedTask();
+        const aDurScale = (task && task.audioDurScale) ? (task.audioDurScale / 100) : 1;
+        return t * aDurScale;
+    } else {
+        if (_reelsState.mockPlaying) {
+            return Math.max(0, (performance.now() / 1000) - (_reelsState.mockStartTime || 0));
+        }
+        return _reelsState.mockPausedTime || 0;
+    }
 }
 
 function _getPreviewDuration() {
@@ -1659,16 +1709,32 @@ function _getPreviewDuration() {
     const aDur = audio && isFinite(audio.duration) ? (audio.duration || 0) : 0;
     const vDur = video && isFinite(video.duration) ? (video.duration || 0) : 0;
 
+    // 音频变速：audioDurScale=150% → 实际播放时长 = 原时长 × 1.5
+    const aDurScale = (task && task.audioDurScale) ? (task.audioDurScale / 100) : 1;
+    const scaledADur = aDur * aDurScale;
+
     // 自定义时长优先
     if (task && task.customDuration && task.customDuration > 0) {
         return task.customDuration;
     }
-    // 有音频时以音频时长为准（背景自动循环）
-    if (aDur > 0) {
-        return Math.max(aDur, subDur);
+    // 有音频时以变速后的音频时长为准（背景自动循环）
+    if (scaledADur > 0) {
+        return Math.max(scaledADur, subDur * aDurScale);
     }
-    // 无音频时以视频时长为准
-    return Math.max(vDur, subDur, 0);
+    // 无音频时以视频时长为准，若仍无时长则推算虚拟进度
+    const baseDur = Math.max(vDur, subDur, 0);
+    if (baseDur <= 0 && !_getPreviewMasterElement()) {
+        let maxOverlayEnd = 0;
+        if (_reelsState.overlayProxy && _reelsState.overlayProxy.overlayMgr) {
+            for (const ov of (_reelsState.overlayProxy.overlayMgr.overlays || [])) {
+                if (parseFloat(ov.end || 0) > maxOverlayEnd) maxOverlayEnd = parseFloat(ov.end || 0);
+            }
+        }
+        const demoWords = ((document.getElementById('reels-preview-text') || {}).value || '').split(/\s+/).filter(Boolean);
+        const totalDur = Math.max(3, (demoWords.length || 1) * 0.6);
+        return maxOverlayEnd > 0 ? maxOverlayEnd + 0.5 : totalDur;
+    }
+    return baseDur;
 }
 
 function _getPreviewLoopFadeConfig() {
@@ -1780,105 +1846,145 @@ function _generateImpulseResponse(ctx, preset) {
 
 function _setupPreviewReverb() {
     const audio = document.getElementById('reels-preview-audio');
-    if (!audio) return;
+    const video = document.getElementById('reels-preview-video');
+    const bgm = _reelsState._bgmAudioEl;
+    if (!audio && !video && !bgm) return;
 
     const enabled = document.getElementById('reels-reverb-enabled')?.checked || false;
+    const targetFx = document.getElementById('reels-audio-fx-target')?.value || 'all';
+    const stereoWidth = (parseFloat(document.getElementById('reels-stereo-width')?.value) || 100) / 100;
+    const mix = (parseFloat(document.getElementById('reels-reverb-mix')?.value) || 30) / 100;
+    const needsFx = enabled || (stereoWidth > 1.05);
 
-    // 如果已有 context 和连接，先断开
-    if (_reelsState._audioCtx) {
+    // Initialize AudioContext and mediaSources Map if not present
+    if (!_reelsState._audioCtx) {
         try {
-            if (_reelsState._audioSource) {
-                _reelsState._audioSource.disconnect();
+            _reelsState._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            _reelsState._mediaSources = new Map();
+        } catch (e) {
+            console.warn('[Reverb] Web Audio not supported', e);
+            return;
+        }
+    }
+    if (!_reelsState._mediaSources) _reelsState._mediaSources = new Map();
+    const ctx = _reelsState._audioCtx;
+
+    // Attach MediaElementSource for any new elements
+    const els = [audio, video, bgm].filter(Boolean);
+    for (const el of els) {
+        if (!_reelsState._mediaSources.has(el)) {
+            try {
+                const source = ctx.createMediaElementSource(el);
+                _reelsState._mediaSources.set(el, source);
+            } catch (e) {
+                console.warn('[Reverb] Failed to create source for', el, e);
             }
-            if (_reelsState._reverbGainWet) _reelsState._reverbGainWet.disconnect();
-            if (_reelsState._reverbGainDry) _reelsState._reverbGainDry.disconnect();
-            if (_reelsState._convolver) _reelsState._convolver.disconnect();
-            if (_reelsState._stereoDelay) _reelsState._stereoDelay.disconnect();
-        } catch (e) { }
+        }
     }
 
-    if (!enabled) {
-        // 清理 Web Audio 连接，让音频恢复原始播放
-        if (_reelsState._audioSource && _reelsState._audioCtx) {
-            try {
-                _reelsState._audioSource.connect(_reelsState._audioCtx.destination);
-            } catch (e) { }
+    // Disconnect everything fully before rewiring
+    for (const source of _reelsState._mediaSources.values()) {
+        try { source.disconnect(); } catch (e) { }
+    }
+    if (_reelsState._reverbGainWet) { try { _reelsState._reverbGainWet.disconnect(); } catch(e){} }
+    if (_reelsState._reverbGainDry) { try { _reelsState._reverbGainDry.disconnect(); } catch(e){} }
+    if (_reelsState._convolver) { try { _reelsState._convolver.disconnect(); } catch(e){} }
+    if (_reelsState._stereoDelay) {
+        try {
+            _reelsState._stereoDelay.masterGain.disconnect();
+            _reelsState._stereoDelay.splitter.disconnect();
+            _reelsState._stereoDelay.delayL.disconnect();
+            _reelsState._stereoDelay.delayR.disconnect();
+            _reelsState._stereoDelay.merger.disconnect();
+        } catch (e) {}
+    }
+
+    // Determine target element
+    let targetEl = null;
+    let targetSource = null;
+    
+    if (needsFx) {
+        if ((targetFx === 'voice' || targetFx === 'all') && audio?.src) targetEl = audio;
+        else if ((targetFx === 'bg' || targetFx === 'all') && video?.src) targetEl = video;
+        else if ((targetFx === 'bgm' || targetFx === 'all') && bgm?.src) targetEl = bgm;
+        // Fallback cascade
+        if (!targetEl) {
+            if (audio?.src) targetEl = audio;
+            else if (video?.src) targetEl = video;
+            else if (bgm?.src) targetEl = bgm;
         }
+        if (targetEl) targetSource = _reelsState._mediaSources.get(targetEl);
+    }
+
+    // Connect non-targets directly to destination
+    for (const [el, source] of _reelsState._mediaSources.entries()) {
+        if (source !== targetSource) {
+            source.connect(ctx.destination);
+        }
+    }
+
+    // If no FX or no target, clean up and exit
+    if (!needsFx || !targetSource) {
+        if (targetSource) targetSource.connect(ctx.destination);
         return;
     }
 
-    // 创建或复用 AudioContext
-    if (!_reelsState._audioCtx) {
-        _reelsState._audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    const ctx = _reelsState._audioCtx;
-
-    // 创建 source（只能创建一次，所以需要记录）
-    if (!_reelsState._audioSource || _reelsState._audioSourceEl !== audio) {
-        try {
-            _reelsState._audioSource = ctx.createMediaElementSource(audio);
-            _reelsState._audioSourceEl = audio;
-        } catch (e) {
-            // 已经连接过了
-            console.warn('[Reverb] MediaElementSource already exists');
-        }
-    }
-    const source = _reelsState._audioSource;
-    if (!source) return;
-
+    // --- Build FX Chain for target ---
     const preset = document.getElementById('reels-reverb-preset')?.value || 'hall';
-    const mix = (parseFloat(document.getElementById('reels-reverb-mix')?.value) || 30) / 100;
-    const stereoWidth = (parseFloat(document.getElementById('reels-stereo-width')?.value) || 100) / 100;
 
-    // 干声通道
+    // Dry Gain
     const dryGain = ctx.createGain();
-    dryGain.gain.value = 1 - mix * 0.5; // 保留大部分干声
+    dryGain.gain.value = enabled ? (1 - mix * 0.5) : 1.0; 
 
-    // 湿声通道 (混响)
-    const convolver = ctx.createConvolver();
-    convolver.buffer = _generateImpulseResponse(ctx, preset);
-    const wetGain = ctx.createGain();
-    wetGain.gain.value = mix;
+    // Wet Gain (Reverb)
+    let convolver = null;
+    let wetGain = null;
+    if (enabled) {
+        convolver = ctx.createConvolver();
+        convolver.buffer = _generateImpulseResponse(ctx, preset);
+        wetGain = ctx.createGain();
+        wetGain.gain.value = mix;
+    }
 
-    // 立体声增强：用微小延迟差创造宽度
-    const merger = ctx.createChannelMerger(2);
-    const splitter = ctx.createChannelSplitter(2);
-    const delayL = ctx.createDelay(0.05);
-    const delayR = ctx.createDelay(0.05);
-    const widthFactor = Math.max(0, (stereoWidth - 1)) * 0.015; // 扩展量
-    delayL.delayTime.value = widthFactor * 0.3;
-    delayR.delayTime.value = widthFactor * 0.7;
-
-    // 连接: source → splitter → delays → merger → destination
-    //        source → convolver → wetGain ──┘
-    //        source → dryGain ──────────────┘
     const masterGain = ctx.createGain();
     masterGain.gain.value = 1.0;
 
-    source.connect(dryGain);
-    source.connect(convolver);
-    convolver.connect(wetGain);
-
+    targetSource.connect(dryGain);
     dryGain.connect(masterGain);
-    wetGain.connect(masterGain);
 
-    // 立体声扩展
+    if (enabled) {
+        targetSource.connect(convolver);
+        convolver.connect(wetGain);
+        wetGain.connect(masterGain);
+    }
+
+    // Stereo Expansion
     if (stereoWidth > 1.05) {
+        const merger = ctx.createChannelMerger(2);
+        const splitter = ctx.createChannelSplitter(2);
+        const delayL = ctx.createDelay(0.05);
+        const delayR = ctx.createDelay(0.05);
+        const widthFactor = Math.max(0, (stereoWidth - 1)) * 0.015; 
+        delayL.delayTime.value = widthFactor * 0.3;
+        delayR.delayTime.value = widthFactor * 0.7;
+
         masterGain.connect(splitter);
         splitter.connect(delayL, 0);
         splitter.connect(delayR, 1);
         delayL.connect(merger, 0, 0);
         delayR.connect(merger, 0, 1);
         merger.connect(ctx.destination);
+
+        _reelsState._stereoDelay = { delayL, delayR, splitter, merger, masterGain };
     } else {
         masterGain.connect(ctx.destination);
+        _reelsState._stereoDelay = null;
     }
 
-    // 保存引用
+    // Save refs
     _reelsState._convolver = convolver;
     _reelsState._reverbGainWet = wetGain;
     _reelsState._reverbGainDry = dryGain;
-    _reelsState._stereoDelay = { delayL, delayR, splitter, merger, masterGain };
 }
 
 function _getReverbConfig() {
@@ -1887,6 +1993,7 @@ function _getReverbConfig() {
         preset: document.getElementById('reels-reverb-preset')?.value || 'hall',
         mix: parseFloat(document.getElementById('reels-reverb-mix')?.value || '30'),
         stereoWidth: parseFloat(document.getElementById('reels-stereo-width')?.value || '100'),
+        audioFxTarget: document.getElementById('reels-audio-fx-target')?.value || 'all',
     };
 }
 
@@ -2018,7 +2125,7 @@ function _updateTimelineForTask(task) {
         ? (task.segments[task.segments.length - 1].end || 0)
         : 0;
     const totalDur = Math.max(aDur, vDur, subDur, 1);
-    editor.loadAudioTrack(aDur, task.audioPath ? '配音' : '音频');
+    editor.loadAudioTrack(aDur, task.audioPath ? '人声' : '音频');
     const bgTrackDur = task.audioPath ? totalDur : vDur;
     editor.loadBackgroundTrack(bgTrackDur, task.audioPath ? '背景(循环)' : '背景');
     editor.setDuration(totalDur);
@@ -2782,6 +2889,10 @@ function reelsSelectTask(idx) {
         } else {
             audio.removeAttribute('src');
         }
+        // 应用音频变速预览：audioDurScale=150% → playbackRate=0.667（减速）
+        const aDurScale = task.audioDurScale || 100;
+        audio.playbackRate = (aDurScale !== 100) ? (100 / aDurScale) : 1.0;
+        audio.preservesPitch = true; // 变速不变调
     }
 
     // ── 加载 BGM ──
@@ -2856,6 +2967,8 @@ function reelsSelectTask(idx) {
     }
 
     _updateTimelineForTask(task);
+    _reelsState.mockPlaying = false;
+    _reelsState.mockPausedTime = 0;
     _updatePreviewTimeUI(0, _getPreviewDuration());
     if (playBtn) playBtn.textContent = '▶️';
 }
@@ -2908,45 +3021,69 @@ function reelsRemoveTask(idx) {
 
 // ═══════════════════════════════════════════════════════
 // Video preview controls
-// ═══════════════════════════════════════════════════════
-
 function reelsTogglePlay() {
     const video = document.getElementById('reels-preview-video');
     const audio = document.getElementById('reels-preview-audio');
     const fadeVideo = _reelsState.previewFadeVideo;
     const btn = document.getElementById('reels-preview-play');
     const task = _getSelectedTask();
-    if (!task) return;
     _applyPreviewAudioMix();
 
-    const hasAudio = !!(task.audioPath && audio && audio.src);
-    const hasVideo = !!(video && video.src);
-    const isPlaying = hasAudio ? !audio.paused : (hasVideo ? !video.paused : false);
+    const hasAudio = !!(task && task.audioPath && audio && audio.src);
+    const hasVideo = !!(task && task.bgPath && !_isImagePath(task.bgPath) && video && video.src);
+    const master = _getPreviewMasterElement();
+    const hasMedia = !!master;
+    const isPlaying = hasMedia ? !master.paused : !!_reelsState.mockPlaying;
 
     // ── BGM 音频元素 ──
     const bgmAudio = _reelsState._bgmAudioEl;
 
     if (isPlaying) {
-        if (audio) audio.pause();
-        if (video) video.pause();
-        if (fadeVideo) fadeVideo.pause();
+        if (master) {
+            if (audio) audio.pause();
+            if (video) video.pause();
+            if (fadeVideo) fadeVideo.pause();
+        } else {
+            _reelsState.mockPlaying = false;
+            _reelsState.mockPausedTime = _getPreviewCurrentTime();
+        }
         if (bgmAudio) bgmAudio.pause();
         if (btn) btn.textContent = '▶️';
         return;
     }
 
-    if (hasAudio && audio) {
-        audio.play().catch(() => { });
+    // 回到开头：如果当前时间已经到了或超过了总时长
+    const curT = _getPreviewCurrentTime();
+    const durT = _getPreviewDuration();
+
+    if (durT > 0 && curT >= durT - 0.05) {
+        if (hasAudio) audio.currentTime = 0;
+        if (hasVideo) video.currentTime = 0;
+        if (!hasMedia) _reelsState.mockPausedTime = 0;
     }
-    if (hasVideo && video) {
-        if (hasAudio && video.duration > 0) {
-            try { video.currentTime = (audio.currentTime || 0) % video.duration; } catch (e) { }
+
+    if (!hasMedia) {
+        _reelsState.mockPlaying = true;
+        _reelsState.mockStartTime = (performance.now() / 1000) - (_reelsState.mockPausedTime || 0);
+    } else {
+        if (hasAudio && audio && task && task.audioPath) {
+            // 应用音频变速：audioDurScale=150% → playbackRate=0.667
+            const aDurScale = task.audioDurScale || 100;
+            audio.playbackRate = (aDurScale !== 100) ? (100 / aDurScale) : 1.0;
+            audio.preservesPitch = true;
+            audio.play().catch(() => { });
         }
-        video.play().catch(() => { });
-        if (fadeVideo && hasAudio) {
-            fadeVideo.play().catch(() => { });
+        if (hasVideo && video) {
+            if (hasAudio && task && task.audioPath && video.duration > 0) {
+                try { video.currentTime = (audio.currentTime || 0) % video.duration; } catch (e) { }
+            }
+            video.play().catch(() => { });
+            if (fadeVideo && hasAudio && task && task.audioPath) {
+                fadeVideo.play().catch(() => { });
+            }
         }
     }
+
     // ── 同步播放 BGM ──
     if (bgmAudio && bgmAudio.src && task && task.bgmPath) {
         bgmAudio.currentTime = _getPreviewCurrentTime() || 0;
@@ -2962,6 +3099,11 @@ function _onSeek(e) {
     if (!(duration > 0)) return;
     const target = (e.target.value / 100) * duration;
     const task = _getSelectedTask();
+    const master = _getPreviewMasterElement();
+    if (!master) {
+        _reelsState.mockPausedTime = target;
+        _reelsState.mockStartTime = (performance.now() / 1000) - target;
+    }
 
     if (task && task.audioPath && audio && audio.src && isFinite(audio.duration) && audio.duration > 0) {
         audio.currentTime = Math.max(0, Math.min(target, audio.duration));
@@ -2977,8 +3119,8 @@ function _onSeek(e) {
     }
     // ── 同步 BGM seek ──
     const bgmAudio = _reelsState._bgmAudioEl;
-    if (bgmAudio && bgmAudio.src) {
-        bgmAudio.currentTime = target;
+    if (bgmAudio && bgmAudio.src && bgmAudio.duration > 0) {
+        bgmAudio.currentTime = target % bgmAudio.duration;
     }
     _updatePreviewTimeUI(target, duration);
     if (_reelsState.timelineEditor) {
@@ -3322,7 +3464,7 @@ async function _reelsComposeViaBackend(params) {
         if (!resp || !resp.success) {
             const errMsg = (resp && resp.error) || 'Reels 合成失败';
             if (String(errMsg).includes('未知接口: media/reels-compose')) {
-                throw new Error('当前主进程版本不一致（缺少导出接口）。请先完全退出所有 pyMediaTools 进程，再只启动一个实例重试');
+                throw new Error('当前主进程版本不一致（缺少导出接口）。请先完全退出所有 VideoKit 进程，再只启动一个实例重试');
             }
             throw new Error(errMsg);
         }
@@ -3419,7 +3561,7 @@ async function reelsStartExport() {
         // 无配音时仅兼容视频背景（旧模式）；图片背景需要配音来确定时长。
         const allowNoVoice = !_isImagePath(bgPath);
         if (!allowNoVoice) {
-            invalidTasks.push(`${idx + 1}. ${(t.fileName || t.baseName || '未命名任务')} 缺少: 配音音频`);
+            invalidTasks.push(`${idx + 1}. ${(t.fileName || t.baseName || '未命名任务')} 缺少: 人声音频`);
         }
         return allowNoVoice;
     });
@@ -3606,10 +3748,14 @@ async function reelsStartExport() {
                     customDuration: task.customDuration || customDuration || 0,
                     bgmPath: task.bgmPath || '',
                     bgmVolume: (task.bgmVolume != null ? task.bgmVolume : 10) / 100,
+                    bgScale: task.bgScale || 100,
+                    bgDurScale: task.bgDurScale || 100,
+                    audioDurScale: task.audioDurScale || 100,
                     reverbEnabled: (() => { const rc = _getReverbConfig(); console.log('[Export] Reverb config:', JSON.stringify(rc)); return rc.enabled; })(),
                     reverbPreset: _getReverbConfig().preset,
                     reverbMix: _getReverbConfig().mix,
                     stereoWidth: _getReverbConfig().stereoWidth,
+                    audioFxTarget: _getReverbConfig().audioFxTarget,
                     useGPU: gpuEnabled,
                     isCancelled: () => !_reelsState.isExporting,
                     onProgress: (pct) => {
@@ -3661,11 +3807,22 @@ async function reelsStartExport() {
                 console.warn('[Reels] FFmpeg IPC not available, skipping:', task.fileName);
             }
 
-            // 拼接前置片段
-            if (introPath && window.electronAPI && window.electronAPI.concatVideo) {
+        // 拼接前置片段 (Hook -> Main)
+            const finalHookPath = task.hookFile || introPath || '';
+            if (finalHookPath && window.electronAPI && window.electronAPI.concatVideo) {
                 const concatOutput = outputPath.replace('.mp4', '_final.mp4');
                 await window.electronAPI.concatVideo({
-                    introPath, mainPath: outputPath, outputPath: concatOutput
+                    introPath: finalHookPath,
+                    mainPath: outputPath,
+                    outputPath: concatOutput,
+                    speed: task.hookSpeed || 1.0,
+                    trimStart: task.hookTrimStart !== undefined ? task.hookTrimStart : null,
+                    trimEnd: task.hookTrimEnd !== undefined ? task.hookTrimEnd : null,
+                    transition: task.hookTransition || 'none',
+                    transDuration: task.hookTransDuration || 0.5,
+                    targetWidth: 1080,
+                    targetHeight: 1920,
+                    fps: 30
                 });
                 finalOutputPath = concatOutput;
             }
@@ -3806,6 +3963,7 @@ function reelsSaveProject() {
         reverbPreset: (document.getElementById('reels-reverb-preset') || {}).value || 'hall',
         reverbMix: parseFloat((document.getElementById('reels-reverb-mix') || {}).value || '30') || 30,
         stereoWidth: parseFloat((document.getElementById('reels-stereo-width') || {}).value || '100') || 100,
+        audioFxTarget: (document.getElementById('reels-audio-fx-target') || {}).value || 'all',
     };
     ReelsProject.saveProject({
         tasks: _reelsState.tasks,
@@ -3851,6 +4009,7 @@ async function reelsLoadProject() {
         if (opts.reverbPreset) setVal('reels-reverb-preset', opts.reverbPreset);
         if (opts.reverbMix !== undefined) setVal('reels-reverb-mix', String(opts.reverbMix));
         if (opts.stereoWidth !== undefined) setVal('reels-stereo-width', String(opts.stereoWidth));
+        if (opts.audioFxTarget !== undefined) setVal('reels-audio-fx-target', opts.audioFxTarget);
     }
 
     _renderTaskList();

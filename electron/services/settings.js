@@ -55,7 +55,7 @@ function getSecureTmpDir(subDir) {
         const { app } = require('electron');
         baseDir = path.join(app.getPath('userData'), 'tmp');
     } catch {
-        baseDir = path.join(os.homedir(), '.pymediatools_tmp');
+        baseDir = path.join(os.homedir(), '.videokit_tmp');
     }
     const dir = subDir ? path.join(baseDir, subDir) : baseDir;
     fs.mkdirSync(dir, { recursive: true });

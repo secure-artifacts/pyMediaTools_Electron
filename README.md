@@ -1,4 +1,4 @@
-# pyMediaTools Electron
+# VideoKit
 
 专业媒体转换、配音、智能字幕编辑的桌面应用（Electron 版）。
 

@@ -7,7 +7,12 @@
  * 
  * 用户可在设置中切换是否接收测试版更新。
  */
-const { autoUpdater } = require('electron-updater');
+let autoUpdater = null;
+try {
+    autoUpdater = require('electron-updater').autoUpdater;
+} catch (e) {
+    console.warn('[Updater] electron-updater not available in dev mode:', e.message);
+}
 const { ipcMain, dialog } = require('electron');
 const fs = require('fs');
 const path = require('path');
@@ -46,6 +51,7 @@ function setUpdateChannel(channel) {
         store.set('updateChannel', channel);
     }
     // 立即生效
+    if (!autoUpdater) return;
     autoUpdater.allowPrerelease = (channel === 'beta');
 
     // 关键：如果当前是测试版，切回 stable 时允许降级到正式版
@@ -71,6 +77,11 @@ function isBetaVersion(version) {
 function initAutoUpdater(win, logFn) {
     mainWindow = win;
     if (logFn) log = logFn;
+
+    if (!autoUpdater) {
+        log('[Updater] autoUpdater 不可用（开发模式），跳过初始化');
+        return;
+    }
 
     const appUpdateYml = path.join(process.resourcesPath || '', 'app-update.yml');
     if (!fs.existsSync(appUpdateYml)) {

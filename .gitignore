@@ -75,3 +75,7 @@ vendor/wav2lip/face_detection/hub/
 vendor/wav2lip/temp/
 vendor/wav2lip/__pycache__/
 vendor/face_detection/
+
+# ==================== CodeQL & Security ====================
+codeql-db/
+*.sarif

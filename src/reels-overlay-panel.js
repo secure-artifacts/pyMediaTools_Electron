@@ -11,6 +11,11 @@
  *   - 变换: X/Y/宽/高/旋转/不透明度
  */
 
+/** 四舍五入到1位小数，避免浮点精度问题 (如 19.700000000000003) */
+function _ropRound(v) {
+    return Math.round((parseFloat(v) || 0) * 10) / 10;
+}
+
 class ReelsOverlayPanel {
     constructor(containerEl, videoCanvas) {
         this.container = containerEl;
@@ -91,15 +96,10 @@ class ReelsOverlayPanel {
                             <input type="range" id="rop-scale" class="rop-range" min="10" max="1000" value="100" style="flex:1;">
                             <span id="rop-scale-val" style="min-width:44px;text-align:right;font-size:12px;color:#aaa;">100%</span>
                         </div>
-                    </div>
-                </div>
-
-                <!-- 时间 -->
-                <div class="rop-group">
-                    <div class="rop-group-title">时间</div>
-                    <div class="rop-grid">
+                        <div id="rop-time-in-transform">
                         <label>开始(s)</label><input type="number" id="rop-start" class="rop-input" step="0.1" min="0">
                         <label>结束(s)</label><input type="number" id="rop-end" class="rop-input" step="0.1" min="0">
+                        </div>
                     </div>
                 </div>
 
@@ -171,10 +171,16 @@ class ReelsOverlayPanel {
                 <!-- 滚动字幕属性 (scroll覆层独有) -->
                 <div id="rop-scroll-props" class="rop-group" style="display:none;">
                     <div class="rop-group-title">🔄 滚动字幕</div>
-                    <textarea id="rop-scroll-content" class="rop-textarea" rows="4" placeholder="滚动文字内容（正文）"></textarea>
-                    <div class="rop-group-title" style="margin-top:6px;">📌 标题</div>
+
+                    <!-- ① 内容：标题在前，正文在后 -->
+                    <div class="rop-group-title" style="margin-top:4px;">📌 标题</div>
                     <div class="rop-grid">
                         <label>标题文字</label><input type="text" id="rop-scroll-title" class="rop-input" placeholder="留空=无标题">
+                        <label>固定标题</label>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <input type="checkbox" id="rop-scroll-title-fixed" checked>
+                            <span style="font-size:11px;color:#888;">标题不参与滚动</span>
+                        </div>
                         <label>标题字号</label><input type="number" id="rop-scroll-title-fontsize" class="rop-input" min="8" max="300" value="56">
                         <label>标题颜色</label><input type="color" id="rop-scroll-title-color" class="rop-color" value="#ffffff">
                         <label>标题字重</label>
@@ -184,13 +190,10 @@ class ReelsOverlayPanel {
                             <option value="800">ExtraBold</option><option value="900">Black</option>
                         </select>
                         <label>标题间距</label><input type="number" id="rop-scroll-title-gap" class="rop-input" min="0" max="200" step="5" value="20">
-                        <label>固定标题</label>
-                        <div style="display:flex;align-items:center;gap:6px;">
-                            <input type="checkbox" id="rop-scroll-title-fixed" checked>
-                            <span style="font-size:11px;color:#888;">标题不参与滚动</span>
-                        </div>
                     </div>
+
                     <div class="rop-group-title" style="margin-top:6px;">📝 正文</div>
+                    <textarea id="rop-scroll-content" class="rop-textarea" rows="4" placeholder="滚动文字内容（正文）"></textarea>
                     <div class="rop-grid">
                         <label>字体</label>
                         <select id="rop-scroll-font" class="rop-select"></select>
@@ -209,42 +212,57 @@ class ReelsOverlayPanel {
                         </select>
                         <label>行距</label><input type="number" id="rop-scroll-linespacing" class="rop-input" min="0" max="50" step="1" value="6">
                         <label>文本宽度</label><input type="number" id="rop-scroll-textw" class="rop-input" min="100" max="1920" step="10" value="900">
+                    </div>
+
+                    <!-- ② 文字效果：描边 + 阴影 -->
+                    <div class="rop-group-title" style="margin-top:8px;">✨ 文字效果</div>
+                    <div class="rop-grid">
                         <label>描边色</label><input type="color" id="rop-scroll-stroke-color" class="rop-color" value="#000000">
                         <label>描边宽</label><input type="number" id="rop-scroll-stroke-width" class="rop-input" min="0" max="20" step="0.5" value="0">
                         <label>阴影</label><input type="checkbox" id="rop-scroll-shadow">
                         <label>阴影色</label><input type="color" id="rop-scroll-shadow-color" class="rop-color" value="#000000">
                         <label>阴影模糊</label><input type="number" id="rop-scroll-shadow-blur" class="rop-input" min="0" max="50" value="4">
                     </div>
-                    <div class="rop-group-title" style="margin-top:8px;">📍 滚动设置
+
+                    <!-- ③ 滚动运动：位置参数 -->
+                    <div class="rop-group-title" style="margin-top:8px;">📍 滚动运动
                         <button id="rop-scroll-show-end" class="btn btn-secondary" style="float:right;padding:1px 8px;font-size:11px;border-radius:4px;">👁 显示终点</button>
                     </div>
                     <div class="rop-grid">
-                        <label title="文字最终停留的Y坐标">最终位置Y</label><input type="number" id="rop-scroll-final-y" class="rop-input" step="10" value="480">
-                        <label title="文字从最终位置向下偏移多少开始滚动(正数=从下方来)">起始偏移</label><input type="number" id="rop-scroll-start-offset" class="rop-input" step="10" value="600">
+                        <label>开始(s)</label><input type="number" id="rop-scroll-start-time" class="rop-input" step="0.1" min="0">
+                        <label>结束(s)</label><input type="number" id="rop-scroll-end-time" class="rop-input" step="0.1" min="0">
+                        <label title="文字开始向上滚动时的初始Y坐标">起始Y</label><input type="number" id="rop-scroll-from-y" class="rop-input" step="10" value="960">
+                        <label title="文字向上滚动最终消失或停留的结束Y坐标">结束Y</label><input type="number" id="rop-scroll-to-y" class="rop-input" step="10" value="-200">
                         <label>X位置</label><input type="number" id="rop-scroll-from-x" class="rop-input" step="10">
-                        <label>速度</label>
-                        <div style="display:flex;align-items:center;gap:6px;">
-                            <input type="range" id="rop-scroll-speed" class="rop-range" min="0.01" max="10" step="0.01" value="0.8" style="flex:1;">
-                            <input type="number" id="rop-scroll-speed-num" class="rop-input" min="0.01" max="100" step="0.01" value="0.8" style="width:60px;">
-                            <span id="rop-scroll-speed-val" style="min-width:20px;text-align:right;font-size:11px;color:#888;">x</span>
-                        </div>
+                        <!-- 速度参数已移除：速度由 距离÷时间 自动决定 -->
+                        <input type="hidden" id="rop-scroll-speed" value="1">
+                        <input type="hidden" id="rop-scroll-speed-num" value="1">
+                    </div>
+
+                    <!-- ④ 智能适配 -->
+                    <div class="rop-group-title" style="margin-top:8px;">🧠 智能适配</div>
+                    <div class="rop-grid">
                         <label>自动停止</label>
                         <div style="display:flex;align-items:center;gap:6px;">
-                            <input type="checkbox" id="rop-scroll-auto-stop" checked>
+                            <input type="checkbox" id="rop-scroll-auto-stop">
                             <span style="font-size:11px;color:#888;">文字全显示后停止滚动</span>
                         </div>
                         <label>字号自适应</label>
                         <div style="display:flex;align-items:center;gap:6px;">
-                            <input type="checkbox" id="rop-scroll-auto-fit" checked>
+                            <input type="checkbox" id="rop-scroll-auto-fit">
                             <span style="font-size:11px;color:#888;">自动缩小确保全部显示</span>
                         </div>
                         <label>最小字号</label><input type="number" id="rop-scroll-min-fontsize" class="rop-input" min="8" max="200" value="16">
                     </div>
+
+                    <!-- ⑤ 羽化 -->
                     <div class="rop-group-title" style="margin-top:8px;">✂️ 羽化</div>
                     <div class="rop-grid">
                         <label>上羽化</label><input type="number" id="rop-scroll-feather-top" class="rop-input" min="0" max="500" step="10" value="80">
                         <label>下羽化</label><input type="number" id="rop-scroll-feather-bottom" class="rop-input" min="0" max="500" step="10" value="80">
                     </div>
+
+                    <!-- ⑥ 卡片背景 -->
                     <div class="rop-group-title" style="margin-top:8px;">📋 卡片背景</div>
                     <div class="rop-grid">
                         <label>启用</label><input type="checkbox" id="rop-scroll-bg-enabled">
@@ -524,6 +542,7 @@ class ReelsOverlayPanel {
             'rop-scroll-shadow', 'rop-scroll-shadow-color', 'rop-scroll-shadow-blur',
             'rop-scroll-from-y', 'rop-scroll-to-y', 'rop-scroll-from-x', 'rop-scroll-to-x',
             'rop-scroll-final-y', 'rop-scroll-start-offset',
+            'rop-scroll-start-time', 'rop-scroll-end-time',
             'rop-scroll-speed',
             'rop-scroll-auto-stop',
             'rop-scroll-auto-fit', 'rop-scroll-min-fontsize',
@@ -539,6 +558,21 @@ class ReelsOverlayPanel {
             el.addEventListener('change', () => this._syncToOverlay());
         }
 
+        // 滚动字幕时间字段 ↔ 主时间字段 双向同步
+        const scrollStartTime = this.container.querySelector('#rop-scroll-start-time');
+        const scrollEndTime = this.container.querySelector('#rop-scroll-end-time');
+        const mainStart = this.container.querySelector('#rop-start');
+        const mainEnd = this.container.querySelector('#rop-end');
+        if (scrollStartTime && mainStart) {
+            scrollStartTime.addEventListener('input', () => { mainStart.value = scrollStartTime.value; });
+            scrollStartTime.addEventListener('change', () => { mainStart.value = scrollStartTime.value; });
+        }
+        if (scrollEndTime && mainEnd) {
+            scrollEndTime.addEventListener('input', () => { mainEnd.value = scrollEndTime.value; });
+            scrollEndTime.addEventListener('change', () => { mainEnd.value = scrollEndTime.value; });
+        }
+
+        // 移除导致死循环的自动修正 "起始偏移" 逻辑（允许独立调节保证顺畅）
         // Live value display for sliders
         const opSlider = this.container.querySelector('#rop-opacity');
         const opVal = this.container.querySelector('#rop-opacity-val');
@@ -551,25 +585,7 @@ class ReelsOverlayPanel {
             scSlider.addEventListener('input', () => { scVal.textContent = scSlider.value + '%'; });
         }
 
-        // Scroll speed: slider ↔ number input bidirectional sync
-        const spSlider = this.container.querySelector('#rop-scroll-speed');
-        const spNum = this.container.querySelector('#rop-scroll-speed-num');
-        if (spSlider && spNum) {
-            spSlider.addEventListener('input', () => {
-                spNum.value = parseFloat(spSlider.value).toFixed(2);
-                this._syncToOverlay();
-            });
-            spNum.addEventListener('input', () => {
-                const v = parseFloat(spNum.value) || 1;
-                if (v >= 0.01 && v <= 10) spSlider.value = v;
-                this._syncToOverlay();
-            });
-            spNum.addEventListener('change', () => {
-                const v = parseFloat(spNum.value) || 1;
-                if (v >= 0.01 && v <= 10) spSlider.value = v;
-                this._syncToOverlay();
-            });
-        }
+        // Scroll speed slider removed — speed is auto-calculated from distance ÷ time
 
         const syncBoldToWeight = (boldId, weightId, boldValue = '700', normalValue = '400') => {
             const boldEl = this.container.querySelector('#' + boldId);
@@ -1225,6 +1241,10 @@ class ReelsOverlayPanel {
         this.container.querySelector('#rop-wh-label-w').textContent = isScroll ? '裁切宽' : '宽度';
         this.container.querySelector('#rop-wh-label-h').textContent = isScroll ? '裁切高' : '高度';
 
+        // 滚动覆层: 时间字段移到滚动运动区
+        const timeInTransform = this.container.querySelector('#rop-time-in-transform');
+        if (timeInTransform) timeInTransform.style.display = isScroll ? 'none' : '';
+
         this._syncFromOverlay(ov);
         this._refreshList();
     }
@@ -1305,18 +1325,26 @@ class ReelsOverlayPanel {
         this._val('rop-opacity', opacityPct);
         const opValEl = this.container.querySelector('#rop-opacity-val');
         if (opValEl) opValEl.textContent = opacityPct + '%';
-        this._val('rop-start', ov.start || 0);
+        // 清理源数据浮点精度 + 显示
+        ov.start = _ropRound(ov.start || 0);
+        this._val('rop-start', ov.start);
         // 9999 = 全程，面板显示实际时长但不修改数据
         let displayEnd = ov.end || 0;
         if (displayEnd >= 9999) {
             const mediaEl = document.getElementById('reels-preview-video') || document.querySelector('#reels-preview video');
             if (mediaEl && mediaEl.duration && isFinite(mediaEl.duration)) {
-                displayEnd = parseFloat(mediaEl.duration.toFixed(1));
+                displayEnd = _ropRound(mediaEl.duration);
             } else {
                 displayEnd = 9999; // 保持原值
             }
+        } else {
+            ov.end = _ropRound(displayEnd);
+            displayEnd = ov.end;
         }
         this._val('rop-end', displayEnd);
+        // 同步到滚动字幕专用的时间字段
+        this._val('rop-scroll-start-time', ov.start);
+        this._val('rop-scroll-end-time', displayEnd);
 
         if (ov.type === 'text') {
             this._val('rop-content', ov.content || '');
@@ -1425,19 +1453,15 @@ class ReelsOverlayPanel {
             this._val('rop-scroll-shadow', ov.shadow_enabled || false);
             this._val('rop-scroll-shadow-color', ov.shadow_color || '#000000');
             this._val('rop-scroll-shadow-blur', ov.shadow_blur || 4);
-            // Convert internal from/to model → intuitive final/offset model
-            const finalY = parseFloat(ov.scroll_to_y ?? -200);
-            const fromY = parseFloat(ov.scroll_from_y ?? 960);
-            this._val('rop-scroll-final-y', finalY);
-            this._val('rop-scroll-start-offset', fromY - finalY);
+            // 独立同步 起始Y 和 结束Y
+            this._val('rop-scroll-from-y', ov.scroll_from_y ?? 960);
+            this._val('rop-scroll-to-y', ov.scroll_to_y ?? -200);
             this._val('rop-scroll-from-x', ov.scroll_from_x ?? 90);
-            this._val('rop-scroll-speed', ov.scroll_speed ?? 0.8);
-            const spNumEl = this.container.querySelector('#rop-scroll-speed-num');
-            if (spNumEl) spNumEl.value = parseFloat(ov.scroll_speed ?? 0.8).toFixed(2);
+            // scroll_speed 已移除，速度由 距离÷时间 自动决定
             this._val('rop-scroll-feather-top', ov.feather_top ?? 80);
             this._val('rop-scroll-feather-bottom', ov.feather_bottom ?? 80);
-            this._val('rop-scroll-auto-stop', ov.scroll_auto_stop !== false);
-            this._val('rop-scroll-auto-fit', ov.scroll_auto_fit !== false);
+            this._val('rop-scroll-auto-stop', ov.scroll_auto_stop === true);
+            this._val('rop-scroll-auto-fit', ov.scroll_auto_fit === true);
             this._val('rop-scroll-min-fontsize', ov.scroll_min_fontsize ?? 16);
             // 卡片背景
             this._val('rop-scroll-bg-enabled', ov.bg_enabled || false);
@@ -1470,8 +1494,8 @@ class ReelsOverlayPanel {
         ov.h = this._get('rop-h');
         ov.rotation = this._get('rop-rotation');
         ov.opacity = Math.round(this._get('rop-opacity') / 100 * 255);
-        ov.start = this._get('rop-start');
-        ov.end = this._get('rop-end');
+        ov.start = _ropRound(this._get('rop-start'));
+        ov.end = _ropRound(this._get('rop-end'));
 
         if (ov.type === 'text') {
             ov.content = this._get('rop-content');
@@ -1579,14 +1603,12 @@ class ReelsOverlayPanel {
             ov.shadow_enabled = this._get('rop-scroll-shadow');
             ov.shadow_color = this._get('rop-scroll-shadow-color');
             ov.shadow_blur = this._get('rop-scroll-shadow-blur');
-            // Convert intuitive final/offset model → internal from/to
-            const finalY = this._get('rop-scroll-final-y') ?? -200;
-            const offset = this._get('rop-scroll-start-offset') ?? 600;
-            ov.scroll_from_y = finalY + offset;
-            ov.scroll_to_y = finalY;
+            // 独立获取设置，解耦拖动逻辑防止双重偏移修改死循环
+            ov.scroll_from_y = this._get('rop-scroll-from-y') ?? 960;
+            ov.scroll_to_y = this._get('rop-scroll-to-y') ?? -200;
             ov.scroll_from_x = this._get('rop-scroll-from-x');
             ov.scroll_to_x = ov.scroll_from_x;  // X stays the same
-            ov.scroll_speed = this._get('rop-scroll-speed-num') || this._get('rop-scroll-speed') || 0.8;
+            ov.scroll_speed = 1;  // 固定为1，速度由 距离÷时间 自动决定
             ov.feather_top = this._get('rop-scroll-feather-top');
             ov.feather_bottom = this._get('rop-scroll-feather-bottom');
             ov.scroll_auto_stop = this._get('rop-scroll-auto-stop');

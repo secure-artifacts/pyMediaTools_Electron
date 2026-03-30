@@ -331,7 +331,9 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
     }
 
     const projectName = path.basename(savePath, path.extname(savePath));
-    const videoSrc = 'file://' + videoPath;
+    const videoSrc = videoPath ? ('file://' + videoPath) : '';
+    // 多视频模式：每个 segment 可以有自己的 videoPath 和 videoDuration
+    const isMultiVideo = segments.some(s => s.videoPath);
 
     // 默认字幕样式：Playfair Display SemiBold, 32pt, 黄色, 字距0, 位置 X=720 Y=800
     const defaultCol = { font: 'Playfair Display', fontFace: 'SemiBold', fontSize: 32, color: '1.0000 0.8980 0.0000 1', posX: 720, posY: 800, bold: '1', tracking: '0', lineSpacing: '0' };
@@ -361,8 +363,13 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
     // 计算总时间线长度
     let totalDuration = 0;
     for (const seg of segments) {
-        const segEnd = seg.end != null ? seg.end : videoDuration;
-        totalDuration += segEnd - seg.start;
+        if (seg.videoPath && seg.videoDuration) {
+            // 多视频模式：整段视频
+            totalDuration += seg.videoDuration;
+        } else {
+            const segEnd = seg.end != null ? seg.end : videoDuration;
+            totalDuration += segEnd - seg.start;
+        }
     }
     const totalDurStr = secToFrac(videoDuration || totalDuration);
     const timelineDurStr = secToFrac(totalDuration);
@@ -378,7 +385,9 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
     for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
         const clipName = seg.name || `片段${i + 1}`;
-        xml += `\t\t<asset name="${xmlEscape(clipName)}" src="${xmlEscape(videoSrc)}" start="0/${Math.round(fps)}s" duration="${totalDurStr}" hasVideo="1" hasAudio="1" format="r0" id="r${i + 1}"/>\n`;
+        const assetSrc = seg.videoPath ? ('file://' + seg.videoPath) : videoSrc;
+        const assetDurStr = (seg.videoPath && seg.videoDuration) ? secToFrac(seg.videoDuration) : totalDurStr;
+        xml += `\t\t<asset name="${xmlEscape(clipName)}" src="${xmlEscape(assetSrc)}" start="0/${Math.round(fps)}s" duration="${assetDurStr}" hasVideo="1" hasAudio="1" format="r0" id="r${i + 1}"/>\n`;
     }
     // 文字生成器 effect
     xml += `\t\t<effect name="Basic Title" uid=".../Titles.localized/Build In:Out.localized/Basic Title.localized/Basic Title.moti" id="r100"/>\n`;
@@ -394,8 +403,9 @@ function segmentsToFcpxml(videoPath, segments, videoDuration, fps, resolution, s
     let timelineOffset = 0;
     for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
-        const segStart = seg.start;
-        const segEnd = seg.end != null ? seg.end : videoDuration;
+        // 多视频模式：start=0, duration=整段视频长度
+        const segStart = (seg.videoPath && seg.videoDuration) ? 0 : seg.start;
+        const segEnd = (seg.videoPath && seg.videoDuration) ? seg.videoDuration : (seg.end != null ? seg.end : videoDuration);
         const segDuration = segEnd - segStart;
 
         const clipName = seg.name || `片段${i + 1}`;

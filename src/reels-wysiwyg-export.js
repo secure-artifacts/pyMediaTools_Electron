@@ -110,10 +110,14 @@ async function reelsWysiwygExport(params) {
         customDuration = 0,  // 自定义输出时长（秒），0 = 自动
         bgmPath = '',        // 配乐文件路径
         bgmVolume = 0.3,     // 配乐音量 (0~1)
+        bgScale = 100,       // 背景图片缩放 (50~300%)
+        bgDurScale = 100,    // 背景素材时长缩放 (10~500%)
+        audioDurScale = 100,  // 音频素材时长缩放 (10~500%)
         reverbEnabled = false,
         reverbPreset = 'hall',
         reverbMix = 30,
         stereoWidth = 100,
+        audioFxTarget = 'all',
         useGPU = false,
         onProgress,
         onLog,
@@ -140,17 +144,31 @@ async function reelsWysiwygExport(params) {
 
     // 获取时长：优先自定义时长，否则音频时长，否则视频背景时长
     let duration = 0;
+    const _audioDurFactor = (audioDurScale || 100) / 100;
+    const _bgDurFactor = (bgDurScale || 100) / 100;
     if (customDuration > 0) {
         duration = customDuration;
         log(`使用自定义时长: ${duration}s`);
     } else {
         if (voicePath) {
             log('正在获取音频时长...');
-            duration = await window.electronAPI.getMediaDuration(voicePath);
+            let rawAudioDur = await window.electronAPI.getMediaDuration(voicePath);
+            if (rawAudioDur > 0 && _audioDurFactor !== 1.0) {
+                duration = rawAudioDur * _audioDurFactor;
+                log(`音频原始时长: ${rawAudioDur.toFixed(2)}s × ${audioDurScale}% = ${duration.toFixed(2)}s`);
+            } else {
+                duration = rawAudioDur;
+            }
         }
         if (!duration || duration <= 0) {
             log('正在获取背景视频时长...');
-            duration = await window.electronAPI.getMediaDuration(backgroundPath);
+            let rawBgDur = await window.electronAPI.getMediaDuration(backgroundPath);
+            if (rawBgDur > 0 && _bgDurFactor !== 1.0) {
+                duration = rawBgDur * _bgDurFactor;
+                log(`背景原始时长: ${rawBgDur.toFixed(2)}s × ${bgDurScale}% = ${duration.toFixed(2)}s`);
+            } else {
+                duration = rawBgDur;
+            }
         }
         if (!duration || duration <= 0) {
             // 图片背景无音频时默认 5 秒
@@ -160,6 +178,19 @@ async function reelsWysiwygExport(params) {
     }
     const totalFrames = Math.ceil(duration * fps);
     log(`时长: ${duration.toFixed(2)}s, 帧数: ${totalFrames}, FPS: ${fps}`);
+    if (bgScale !== 100) log(`背景缩放: ${bgScale}%`);
+    if (bgDurScale !== 100) log(`背景时长缩放: ${bgDurScale}%`);
+    if (audioDurScale !== 100) log(`音频时长缩放: ${audioDurScale}%`);
+
+    // ── 按 audioDurScale 缩放字幕时间戳（让字幕跟随音频拉长/缩短）──
+    if (_audioDurFactor !== 1.0 && segments && segments.length > 0) {
+        log(`字幕时间戳同步缩放 ×${_audioDurFactor.toFixed(2)}`);
+        segments = segments.map(seg => ({
+            ...seg,
+            start: (seg.start || 0) * _audioDurFactor,
+            end:   (seg.end   || 0) * _audioDurFactor,
+        }));
+    }
 
     // 注意：OfflineAudioContext 在 Electron contextIsolation:true 下会崩溃
     // 所有音频效果由 FFmpeg afir 卷积滤镜处理（使用相同 seeded PRNG 的 IR）
@@ -177,6 +208,7 @@ async function reelsWysiwygExport(params) {
         duration: duration,
         loopFade,
         loopFadeDur,
+        bgScale: bgScale || 100,
     });
 
     if (!prepResult || prepResult.error) {
@@ -203,10 +235,12 @@ async function reelsWysiwygExport(params) {
         bgHasAudio: (voicePath && backgroundPath && voicePath === backgroundPath) ? false : !_isImageFile(backgroundPath),
         bgmPath: bgmPath || '',
         bgmVolume: bgmVolume || 0,
+        audioDurScale: audioDurScale || 100,
         reverbEnabled,
         reverbPreset,
         reverbMix,
         stereoWidth,
+        audioFxTarget,
         useGPU,
     });
     if (!sessionId) throw new Error('FFmpeg 启动失败');
@@ -255,8 +289,22 @@ async function reelsWysiwygExport(params) {
             ctx.fillStyle = '#000000';
             ctx.fillRect(0, 0, targetWidth, targetHeight);
             if (currentBgImg) {
-                // 背景帧已经是正确尺寸（FFmpeg 提取时已缩放＋裁切）
-                ctx.drawImage(currentBgImg, 0, 0, targetWidth, targetHeight);
+                // 应用背景缩放
+                const _userScale = (bgScale || 100) / 100;
+                if (Math.abs(_userScale - 1.0) < 0.01) {
+                    // 无缩放，直接绘制（FFmpeg 已处理尺寸）
+                    ctx.drawImage(currentBgImg, 0, 0, targetWidth, targetHeight);
+                } else {
+                    // 应用用户缩放: 放大/缩小后居中裁切
+                    const srcW = currentBgImg.naturalWidth || targetWidth;
+                    const srcH = currentBgImg.naturalHeight || targetHeight;
+                    const coverScale = Math.max(targetWidth / srcW, targetHeight / srcH) * _userScale;
+                    const drawW = srcW * coverScale;
+                    const drawH = srcH * coverScale;
+                    const drawX = (targetWidth - drawW) / 2;
+                    const drawY = (targetHeight - drawH) / 2;
+                    ctx.drawImage(currentBgImg, drawX, drawY, drawW, drawH);
+                }
             }
 
             // ── 全局蒙版 ──
@@ -300,11 +348,17 @@ async function reelsWysiwygExport(params) {
 
             // ── Canvas → Raw RGBA → IPC（零压缩）──
             const rawBuf = _canvasToRawRGBA(canvas);
-            const ok = await window.electronAPI.reelsComposeWysiwyg('frame', {
+            const frameResult = await window.electronAPI.reelsComposeWysiwyg('frame', {
                 sessionId,
                 raw: rawBuf,
             });
-            if (!ok) throw new Error(`FFmpeg 写入帧失败 (frame ${frameIdx})`);
+            // 兼容旧版 boolean 和新版 { ok, error, detail } 格式
+            const frameOk = frameResult === true || (frameResult && frameResult.ok);
+            if (!frameOk) {
+                const errMsg = (frameResult && frameResult.error) || '未知编码错误';
+                const errDetail = (frameResult && frameResult.detail) || '';
+                throw new Error(`FFmpeg 写入帧失败 (frame ${frameIdx}): ${errMsg}${errDetail ? '\n' + errDetail.slice(-200) : ''}`);
+            }
 
             // ── 进度 + UI yield ──
             if (frameIdx % Math.max(1, Math.floor(fps / 2)) === 0) {

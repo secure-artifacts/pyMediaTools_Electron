@@ -1,4 +1,4 @@
-# 🌍 pyMediaTools 跨平台打包完整指南
+# 🌍 VideoKit 跨平台打包完整指南
 
 ## 目录
 1. [架构概述](#架构概述)
@@ -13,7 +13,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                         pyMediaTools                             │
+│                         VideoKit                             │
 ├─────────────────────────────────────────────────────────────────┤
 │  Electron Shell (跨平台 UI)                                      │
 │  ├── main.js (智能平台检测)                                       │
@@ -172,14 +172,14 @@ npm run pack:all
 
 ```
 dist-electron/
-├── pyMediaTools-2.1.0-arm64.dmg      # macOS ARM64
-├── pyMediaTools-2.1.0.dmg            # macOS x64
-├── pyMediaTools-2.1.0-arm64-mac.zip
-├── pyMediaTools-2.1.0-mac.zip
-├── pyMediaTools-2.1.0-win.zip        # Windows x64
-├── pyMediaTools-2.1.0-arm64-win.zip  # Windows ARM64
-├── pyMediaTools-2.1.0.AppImage       # Linux x64
-└── pyMediaTools-2.1.0-arm64.AppImage # Linux ARM64
+├── VideoKit-2.1.0-arm64.dmg      # macOS ARM64
+├── VideoKit-2.1.0.dmg            # macOS x64
+├── VideoKit-2.1.0-arm64-mac.zip
+├── VideoKit-2.1.0-mac.zip
+├── VideoKit-2.1.0-win.zip        # Windows x64
+├── VideoKit-2.1.0-arm64-win.zip  # Windows ARM64
+├── VideoKit-2.1.0.AppImage       # Linux x64
+└── VideoKit-2.1.0-arm64.AppImage # Linux ARM64
 ```
 
 ---

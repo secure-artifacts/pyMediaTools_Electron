@@ -13,9 +13,17 @@ async function refreshVWVoices() {
         const data = await response.json();
 
         if (data.voices && data.voices.length > 0) {
-            select.innerHTML = data.voices.map(v =>
-                `<option value="${v.voice_id}">${v.name}</option>`
-            ).join('');
+            select.innerHTML = data.voices.map(v => {
+                const shortId = v.voice_id ? v.voice_id.slice(0, 8) + '...' : '';
+                const catLabel = (typeof _voiceCategoryLabel === 'function')
+                    ? _voiceCategoryLabel(v.category)
+                    : (v.category === 'premade' ? '🆓 [免费]' : '💰 [付费]');
+                const cleanName = v.name.replace(/^\[[^\]]+\]\s*/, '');
+                return `<option value="${v.voice_id}" data-category="${v.category || 'premade'}" data-full-voice-id="${v.voice_id}">${catLabel} ${cleanName} (${shortId})</option>`;
+            }).join('');
+
+            // 设置或刷新 Voice ID 提示行
+            _setupVWVoiceTip(select);
         } else if (data.error) {
             select.innerHTML = `<option value="">错误: ${escapeHtml(data.error)}</option>`;
             showToast(`获取音色失败: ${data.error}`, 'error');
@@ -27,6 +35,46 @@ async function refreshVWVoices() {
         select.innerHTML = '<option value="">[网络或后端错误]</option>';
         showToast('获取音色异常，后端可能未响应', 'error');
     }
+}
+
+/** 在一键配音音色下拉框下方显示完整 Voice ID + 免费/付费标签 */
+function _setupVWVoiceTip(select) {
+    let tip = document.getElementById('vw-voice-id-tip');
+    if (!tip) {
+        tip = document.createElement('div');
+        tip.id = 'vw-voice-id-tip';
+        tip.style.cssText = 'font-size: 11px; color: var(--text-muted); margin-top: 4px; font-family: monospace; cursor: pointer; padding: 2px 8px; background: rgba(255,255,255,0.03); border-radius: 4px; display: none; transition: all 0.2s;';
+        tip.title = '点击复制 Voice ID';
+        tip.onclick = () => {
+            const vid = select.value;
+            if (vid) {
+                navigator.clipboard.writeText(vid).then(() => showToast(`已复制 Voice ID: ${vid}`, 'success'));
+            }
+        };
+        // 插入到 select 的父容器后面
+        select.parentNode.appendChild(tip);
+    }
+
+    const updateTip = () => {
+        const opt = select.options[select.selectedIndex];
+        if (opt && opt.value) {
+            const cat = opt.dataset?.category || 'premade';
+            const isFree = cat === 'premade';
+            const freeTag = isFree
+                ? '<span style="color:#00d9a5;font-size:10px;margin-left:6px;">✅ 免费API可用</span>'
+                : '<span style="color:#ff9f43;font-size:10px;margin-left:6px;">💳 需付费订阅</span>';
+            tip.innerHTML = `Voice ID: <span style="color:var(--text-primary);">${opt.value}</span>${freeTag}`;
+            tip.style.display = 'block';
+        } else {
+            tip.style.display = 'none';
+        }
+    };
+
+    // Remove old listener to avoid duplicates
+    select.removeEventListener('change', select._vwTipHandler);
+    select._vwTipHandler = updateTip;
+    select.addEventListener('change', updateTip);
+    setTimeout(updateTip, 100);
 }
 
 // 从剪贴板粘贴数据

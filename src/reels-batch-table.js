@@ -35,6 +35,7 @@ const _batchTableState = {
     videoDropRouteMode: 'bg', // 'bg' | 'audio'
     // ── 批量选择 ──
     selectedRows: new Set(),
+    actionsCollapsed: false,
 };
 
 // ── 标签页辅助 ──
@@ -44,7 +45,12 @@ function _getActiveTab() {
 
 function _syncTasksToActiveTab() {
     const tab = _getActiveTab();
-    if (tab) tab.tasks = _serializeTasks(window._reelsState.tasks);
+    if (tab) {
+        tab.tasks = _serializeTasks(window._reelsState.tasks);
+        // DEBUG
+        const _dbg = tab.tasks.slice(0, 3).map((t, i) => `[${i}] bgScale=${t.bgScale}`);
+        console.log('[BatchTable._syncTasksToActiveTab] 保存到 tab:', _dbg.join(', '));
+    }
 }
 
 function _loadTabTasks(tab) {
@@ -117,11 +123,17 @@ function reelsToggleBatchTable() {
     if (!_batchTableState.container) _initBatchTable();
     _batchTableState.visible = !_batchTableState.visible;
     if (_batchTableState.visible) {
+        // DEBUG
+        const _dbg = (window._reelsState?.tasks || []).slice(0, 3).map((t, i) => `[${i}]bgScale=${t.bgScale}`);
+        console.log('[BatchTable.toggle] 打开表格，当前 tasks:', _dbg.join(', '));
         // Sync current tasks into active tab on open
         _syncTasksToActiveTab();
         _renderBatchTable();
         _batchTableState.container.style.display = 'flex';
     } else {
+        // 关闭时先保存输入框中的值到 task
+        _applyBatchTableChanges();
+        console.log('[BatchTable.toggle] 关闭表格，已保存 changes');
         _batchTableState.container.style.display = 'none';
     }
 }
@@ -345,6 +357,10 @@ function _renderBatchTable() {
     const state = window._reelsState;
     if (!state) return;
 
+    // DEBUG: 追踪 bgScale 持久化
+    const _dbgScales = (state.tasks || []).slice(0, 3).map((t, i) => `[${i}] bgScale=${t.bgScale} bgDur=${t.bgDurScale} audioDur=${t.audioDurScale}`);
+    console.log('[BatchTable._renderBatchTable] 渲染前 task scales:', _dbgScales.join(', '));
+
     // 自动保存当前配置到 localStorage
     _batchAutoSave();
     const tasks = state.tasks || [];
@@ -394,58 +410,77 @@ function _renderBatchTable() {
                 <button class="rbt-btn rbt-btn-refresh" id="rbt-refresh-mat" title="扫描文件夹并同步最新素材" ${!matDir ? 'disabled' : ''}>🔄 一键刷新</button>
                 ${lastRefresh ? `<span class="rbt-refresh-time">上次刷新: ${lastRefresh}</span>` : ''}
                 <span style="flex:1"></span>
+                <button id="rbt-toggle-actions-btn" style="background:#222; border:1px solid #333; color:#ccc; padding:2px 8px; border-radius:4px; font-size:11px; cursor:pointer;" title="隐藏/显示操作面板">${_batchTableState.actionsCollapsed ? '🔽 展开操作面板' : '🔼 收起操作面板'}</button>
             </div>
 
-            <div class="rbt-header">
-                <h2>📋 批量文案管理 <span style="font-size:13px;color:#888;font-weight:400;">— ${_escHtml(activeTab.name)}</span></h2>
-                <div class="rbt-actions">
-                    <button class="rbt-btn rbt-btn-folder" id="rbt-upload-folder" title="选择文件夹，自动按文件类型分类+同名配对">📂 读取文件夹</button>
-                    <button class="rbt-btn" id="rbt-upload-bg" title="批量添加背景素材（图片/视频）">🖼 批量背景</button>
-                    <button class="rbt-btn" id="rbt-set-bgm-btn" title="选择一首配乐，应用到所有勾选的行（或全部行）">🎵 设置配乐</button>
-                    <span class="rbt-sep"></span>
-                    <button class="rbt-btn rbt-btn-voice" id="rbt-upload-audio" title="批量添加音频">🔊 批量音频</button>
-                    <button class="rbt-btn rbt-btn-voice" id="rbt-upload-srt" title="批量加载SRT字幕文件，按顺序或同名分配到各行">📝 批量加载srt字幕文件</button>
-                    <button class="rbt-btn rbt-btn-voice" id="rbt-upload-txt" title="批量加载人声文案TXT文件，填入「文案内容」列">📃 批量加载人声文案txt文件</button>
-                    <label title="开启后，拖入视频按下方模式分配；关闭时保持自动识别"
-                           style="display:flex;align-items:center;gap:4px;font-size:11px;color:#a0d0ff;background:#1a1a3a;border:1px solid #4a6a8a;border-radius:4px;padding:3px 8px;cursor:pointer;">
-                        <input type="checkbox" id="rbt-video-drop-route-enabled" ${_batchTableState.videoDropRouteEnabled ? 'checked' : ''}>
-                        视频分配模式
-                    </label>
-                    <select id="rbt-video-drop-route-mode"
-                            style="font-size:11px;padding:3px 6px;background:#1a1a3a;color:#a0d0ff;border:1px solid #4a6a8a;border-radius:4px;${_batchTableState.videoDropRouteEnabled ? '' : 'opacity:.6;'}"
-                            ${_batchTableState.videoDropRouteEnabled ? '' : 'disabled'}>
-                        <option value="bg" ${_batchTableState.videoDropRouteMode === 'bg' ? 'selected' : ''}>🎬 视频→背景画面</option>
-                        <option value="audio" ${_batchTableState.videoDropRouteMode === 'audio' ? 'selected' : ''}>🎙 视频→配音音频</option>
-                    </select>
-                    <button class="rbt-btn rbt-btn-voice" id="rbt-paste-txtcontent" title="从表格复制文案，批量粘贴到「文案内容」列">📋 从表格粘贴人声文案内容</button>
-                    <select id="rbt-align-source" style="font-size:11px;padding:3px 6px;background:#1a1a3a;color:#a0d0ff;border:1px solid #4a6a8a;border-radius:4px;">
-                        <option value="audio">🎙 用配音对齐(音频/视频)</option>
-                        <option value="video">🎬 用背景视频对齐</option>
-                    </select>
-                    <div style="position:relative;display:inline-block;" id="rbt-lang-picker-wrap">
-                        <button id="rbt-lang-picker-btn" style="font-size:11px;padding:3px 10px;background:#1a1a3a;color:#a0d0ff;border:1px solid #4a6a8a;border-radius:4px;cursor:pointer;min-width:90px;text-align:left;">英语 ▾</button>
-                        <input type="hidden" id="rbt-align-lang" value="英语">
-                        <div id="rbt-lang-dropdown" style="display:none;position:absolute;top:100%;left:0;z-index:9999;background:#1a1a3a;border:1px solid #4a6a8a;border-radius:6px;width:220px;max-height:320px;box-shadow:0 8px 24px rgba(0,0,0,0.6);overflow:hidden;">
-                            <input id="rbt-lang-search" type="text" placeholder="🔍 搜索语言..." style="width:100%;box-sizing:border-box;padding:6px 10px;border:none;border-bottom:1px solid #333;background:#12122a;color:#ddd;font-size:12px;outline:none;">
-                            <div id="rbt-lang-list" style="max-height:270px;overflow-y:auto;"></div>
-                        </div>
+            <div class="rbt-header" style="align-items: flex-start;">
+
+                <div class="rbt-actions" style="display:${_batchTableState.actionsCollapsed ? 'none' : 'flex'}; flex-direction:column; gap:6px; align-items:flex-start;">
+                    <!-- Line 1: 文件/素材加载 (File & Assets Load) -->
+                    <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+                        <button class="rbt-btn" id="rbt-upload-folder" title="选择文件夹，自动按文件类型分类+同名配对">📂 导入素材 (整个文件夹)</button>
+                        <button class="rbt-btn" id="rbt-upload-bg" title="批量添加背景素材（图片/视频）">🖼 批量导入背景</button>
+                        <button class="rbt-btn" id="rbt-set-bgm-btn" title="选择一篇配乐，应用到所有勾选的行">🎵 导入统一配乐</button>
+                        <span class="rbt-sep"></span>
+                        <button class="rbt-btn" id="rbt-upload-audio" title="批量添加人声音频">🔊 批量导入人声</button>
+                        <button class="rbt-btn" id="rbt-upload-srt" title="批量加载SRT字幕文件，按顺序或同名分配到各行">📝 批量导入srt</button>
+                        <button class="rbt-btn" id="rbt-upload-txt" title="批量加载人声文案TXT文件">📃 批量导入人声字幕txt</button>
                     </div>
-                    <label style="display:flex;align-items:center;gap:3px;font-size:10px;color:#888;cursor:pointer;">
-                        <input type="checkbox" id="rbt-force-realign"> 强制重新对齐
-                    </label>
-                    <button class="rbt-btn rbt-btn-voice" id="rbt-align-all-btn" title="对齐所有有文案的任务，生成字幕时间轴">🔗 对齐字幕</button>
-                    <span class="rbt-sep"></span>
-                    <button class="rbt-btn rbt-btn-other" id="rbt-paste-btn" title="从 Google 表格粘贴标题+内容">📋 批量粘贴覆层文案</button>
-                    <button class="rbt-btn rbt-btn-other" id="rbt-paste-scroll-btn" title="从 Google 表格粘贴滚动字幕标题+内容" style="background:#2a6a4a;">🔄 批量粘贴滚动字幕</button>
-                    <span class="rbt-sep"></span>
-                    <button class="rbt-btn" id="rbt-cycle-fill-btn" title="将素材池按权重交错分配到各行，自动避免相邻重复">🔄 循环填充素材</button>
-                    <button class="rbt-btn" id="rbt-add-row-btn" title="添加空行">➕ 添加行</button>
-                    <button class="rbt-btn" id="rbt-save-config-btn" title="导出所有标签页配置为JSON工程文件">💾 保存工程</button>
-                    <button class="rbt-btn" id="rbt-load-config-btn" title="从JSON工程文件恢复所有标签页">📂 加载工程</button>
-                    <input type="file" id="rbt-file-config" class="rbt-hidden-input" accept=".json">
-                    <button class="rbt-btn rbt-btn-danger" id="rbt-clear-btn" title="清空当前标签页所有行">🧹 清空</button>
-                    <button class="rbt-btn" id="rbt-col-settings-btn" title="设置显示哪些列">⚙️ 显示列</button>
-                    <button class="rbt-btn" id="rbt-close-btn" title="关闭表格">✕ 关闭</button>
+
+                    <!-- Line 2: 分配规则与预设 (Allocation Rules) -->
+                    <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+                        <button class="rbt-btn" id="rbt-upload-hook" title="批量配置选中行的前置视频和转场">🪝 批量设置钩子视频</button>
+                        <button class="rbt-btn" id="rbt-cycle-fill-btn" title="将素材池按权重交错分配到各行，自动避免相邻重复">🔄 素材循环使用设置</button>
+                        <label title="开启后，拖入视频按下方模式分配" style="display:flex;align-items:center;gap:4px;font-size:11px;color:#ccc;background:#222;border:1px solid #333;border-radius:4px;padding:3px 8px;cursor:pointer;">
+                            <input type="checkbox" id="rbt-video-drop-route-enabled" ${_batchTableState.videoDropRouteEnabled ? 'checked' : ''}>
+                            视频分配模式
+                        </label>
+                        <select id="rbt-video-drop-route-mode" style="font-size:11px;padding:3px 6px;background:#222;color:#ccc;border:1px solid #333;border-radius:4px;${_batchTableState.videoDropRouteEnabled ? '' : 'opacity:.6;'}" ${_batchTableState.videoDropRouteEnabled ? '' : 'disabled'}>
+                            <option value="hook" ${_batchTableState.videoDropRouteMode === 'hook' ? 'selected' : ''}>🪝 视频→前置Hook</option>
+                            <option value="bg" ${_batchTableState.videoDropRouteMode === 'bg' ? 'selected' : ''}>🎬 视频→背景</option>
+                            <option value="audio" ${_batchTableState.videoDropRouteMode === 'audio' ? 'selected' : ''}>🎙 视频→人声</option>
+                        </select>
+                    </div>
+
+                    <!-- Line 3: 表格快捷录入 (Quick Paste & Fill) -->
+                    <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+                        <button class="rbt-btn" id="rbt-paste-txtcontent" title="从表格复制文案，批量粘贴到「字幕文本」列">📋 粘贴字幕文本</button>
+                        <button class="rbt-btn" id="rbt-paste-btn" title="从 Google 表格粘贴标题+内容">📋 粘贴覆层文案</button>
+                        <button class="rbt-btn" id="rbt-paste-scroll-btn" title="从 Google 表格粘贴滚动字幕标题+内容">🔄 粘贴滚动字幕</button>
+                    </div>
+
+                    <!-- Line 4: 对齐生成 (Alignment Automation) -->
+                    <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+                        <select id="rbt-align-source" style="font-size:11px;padding:3px 6px;background:#222;color:#ccc;border:1px solid #333;border-radius:4px;">
+                            <option value="audio">🎙 用人声对齐</option>
+                            <option value="video">🎬 用视频对齐</option>
+                        </select>
+                        <div style="position:relative;display:inline-block;" id="rbt-lang-picker-wrap">
+                            <button id="rbt-lang-picker-btn" style="font-size:11px;padding:3px 10px;background:#222;color:#ccc;border:1px solid #333;border-radius:4px;cursor:pointer;min-width:90px;text-align:left;">英语 ▾</button>
+                            <input type="hidden" id="rbt-align-lang" value="英语">
+                            <div id="rbt-lang-dropdown" style="display:none;position:absolute;top:100%;left:0;z-index:9999;background:#222;border:1px solid #333;border-radius:6px;width:220px;max-height:320px;box-shadow:0 8px 24px rgba(0,0,0,0.6);overflow:hidden;">
+                                <input id="rbt-lang-search" type="text" placeholder="🔍 搜索语言..." style="width:100%;box-sizing:border-box;padding:6px 10px;border:none;border-bottom:1px solid #333;background:#1a1a1a;color:#ddd;font-size:12px;outline:none;">
+                                <div id="rbt-lang-list" style="max-height:270px;overflow-y:auto;"></div>
+                            </div>
+                        </div>
+                        <button class="rbt-btn" id="rbt-align-all-btn" title="对齐所有有文案的任务，生成字幕时间轴">🔗 一键对齐字幕</button>
+                        <label style="display:flex;align-items:center;gap:3px;font-size:10px;color:#888;cursor:pointer;">
+                            <input type="checkbox" id="rbt-force-realign"> 强制重新对齐
+                        </label>
+                    </div>
+
+                    <!-- Line 5: 工程与系统管理 (Project Management & Settings) -->
+                    <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">
+                        <button class="rbt-btn" id="rbt-add-row-btn" title="添加空行">➕ 添加行</button>
+                        <button class="rbt-btn rbt-btn-danger" id="rbt-clear-btn" title="清空当前标签页所有行">🧹 清空</button>
+                        <span class="rbt-sep"></span>
+                        <button class="rbt-btn" id="rbt-save-config-btn" title="导出所有标签页配置为JSON工程文件">💾 保存工程</button>
+                        <button class="rbt-btn" id="rbt-load-config-btn" title="从JSON工程文件恢复所有标签页">📂 加载工程</button>
+                        <input type="file" id="rbt-file-config" class="rbt-hidden-input" accept=".json">
+                        <span class="rbt-sep"></span>
+                        <button class="rbt-btn" id="rbt-col-settings-btn" title="设置显示哪些列">⚙️ 列设置</button>
+                        <button class="rbt-btn" id="rbt-close-btn" title="关闭表格">✕ 关闭界面</button>
+                    </div>
                 </div>
             </div>
 
@@ -469,6 +504,12 @@ function _renderBatchTable() {
                 <span class="rbt-sep"></span>
                 <button class="rbt-btn rbt-btn-danger" id="rbt-clear-overlay-btn" style="font-size:10px;padding:2px 8px;" title="清空勾选行的覆层标题/内容/结尾（未勾选则清空全部）">🧹 清空覆层</button>
                 <span class="rbt-sep"></span>
+                <span style="font-size:11px;color:#888;">缩放:</span>
+                <label style="display:flex;align-items:center;gap:2px;font-size:10px;color:#4fc3f7;" title="批量设置选中行的背景图片缩放">🔍<input type="number" id="rbt-batch-bgscale" min="50" max="300" value="100" step="5" style="width:40px;font-size:10px;padding:1px 2px;background:#1a1a3a;color:#4fc3f7;border:1px solid #4a6a8a;border-radius:3px;text-align:center;">%</label>
+                <label style="display:flex;align-items:center;gap:2px;font-size:10px;color:#81c784;" title="批量设置选中行的背景素材时长缩放">⏱🖼<input type="number" id="rbt-batch-bgdurscale" min="10" max="500" value="100" step="5" style="width:40px;font-size:10px;padding:1px 2px;background:#1a1a3a;color:#81c784;border:1px solid #4a6a8a;border-radius:3px;text-align:center;">%</label>
+                <label style="display:flex;align-items:center;gap:2px;font-size:10px;color:#ffb74d;" title="批量设置选中行的人声音频素材时长缩放">⏱🔊<input type="number" id="rbt-batch-audiodurscale" min="10" max="500" value="100" step="5" style="width:40px;font-size:10px;padding:1px 2px;background:#1a1a3a;color:#ffb74d;border:1px solid #4a6a8a;border-radius:3px;text-align:center;">%</label>
+                <button class="rbt-btn" id="rbt-apply-batch-scale" style="font-size:10px;padding:2px 8px;">应用缩放</button>
+                <span class="rbt-sep"></span>
                 <button class="rbt-btn rbt-btn-accent" id="rbt-export-selected-btn" style="font-size:10px;padding:2px 8px;display:none;" title="仅将勾选的行导出到主任务列表（表格数据不变）">📤 仅导出选中行</button>
                 <span id="rbt-selected-count" style="font-size:11px;color:#00D4FF;margin-left:8px;"></span>
             </div>
@@ -488,10 +529,14 @@ function _renderBatchTable() {
                             <th class="rbt-col-drag" style="width:24px;"></th>
                             <th class="rbt-col-chk" style="width:30px;text-align:center;">☐</th>
                             <th class="rbt-col-num">#</th>
+                            <th class="rbt-col-hook">🪝 前置Hook</th>
                             <th class="rbt-col-bg">🖼 背景素材</th>
-                            <th class="rbt-col-audio">🔊 音频</th>
-                            <th class="rbt-col-srt">📝 字幕</th>
-                            <th class="rbt-col-txtcontent">📃 文案内容</th>
+                            <th class="rbt-col-bgscale">🔍 背景缩放</th>
+                            <th class="rbt-col-bgdurscale">⏱🖼 背景时长</th>
+                            <th class="rbt-col-audio">🔊 人声音频层</th>
+                            <th class="rbt-col-audiodurscale">⏱🔊 人声变速</th>
+                            <th class="rbt-col-srt">📝 字幕SRT</th>
+                            <th class="rbt-col-txtcontent">📃 字幕文本</th>
                             <th class="rbt-col-bgm">🎵 配乐</th>
                             <th class="rbt-col-title">📋 覆层标题</th>
                             <th class="rbt-col-body">📋 覆层内容</th>
@@ -514,6 +559,73 @@ function _renderBatchTable() {
                 <span id="rbt-align-progress" style="font-size:12px;color:#a0d0ff;margin-left:12px;"></span>
                 <div class="rbt-footer-hint">提示: 先粘贴文案创建行 → 再批量添加素材自动按顺序分配 | 设置素材文件夹后可一键刷新同步最新文件</div>
                 <button class="rbt-btn rbt-btn-primary" id="rbt-apply-btn">✅ 应用更改并关闭</button>
+            </div>
+        </div>
+            <div id="rbt-hook-modal" style="display:none;position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.8);z-index:99999;align-items:center;justify-content:center;">
+                <div style="background:#1a1a2e;padding:20px;border-radius:8px;border:1px solid #333;width:400px;display:flex;flex-direction:column;gap:12px;">
+                    <h3 style="margin:0;color:#fff;font-size:14px;display:flex;align-items:center;gap:6px;">🪝 前置/Hook 设置</h3>
+                    
+                    <div style="font-size:12px;color:#ccc;display:flex;align-items:center;gap:8px;">
+                        <span>Hook:</span>
+                        <input type="text" id="rbt-hook-path" style="flex:1;background:#222;color:#ccc;border:1px solid #333;padding:4px;font-size:11px;" readonly placeholder="未选择 (留空则从正片开始)">
+                        <button class="rbt-btn" id="rbt-hook-select-btn" style="padding:4px 8px;">浏览素材</button>
+                    </div>
+
+                    <div id="rbt-hook-preview-container" style="display:none;width:100%;height:160px;background:#000;border-radius:4px;overflow:hidden;position:relative;border:1px solid #333;">
+                        <video id="rbt-hook-preview-video" style="width:100%;height:100%;object-fit:contain;" controls preload="metadata"></video>
+                        <img id="rbt-hook-preview-img" style="width:100%;height:100%;object-fit:contain;display:none;">
+                    </div>
+
+                    <div style="background:#222;padding:10px;border-radius:4px;display:flex;flex-direction:column;gap:8px;border:1px solid #333;">
+                        <span style="font-size:11px;color:#888;">裁切区间 (秒，留空表示使用原文件长度)</span>
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            <button class="rbt-btn" id="rbt-hook-mark-start" style="padding:3px 8px;font-size:11px;" title="将当前视频播放位置设为起始点">⏩ 设为起点</button>
+                            <input type="number" id="rbt-hook-start" style="width:60px;background:#111;color:#fff;border:1px solid #333;padding:4px;text-align:center;" placeholder="Start" step="0.1" min="0">
+                            <span style="color:#666;">至</span>
+                            <input type="number" id="rbt-hook-end" style="width:60px;background:#111;color:#fff;border:1px solid #333;padding:4px;text-align:center;" placeholder="End" step="0.1" min="0">
+                            <button class="rbt-btn" id="rbt-hook-mark-end" style="padding:3px 8px;font-size:11px;" title="将当前视频播放位置设为结束点">⏪ 设为终点</button>
+                            <span style="flex:1;"></span>
+                            <span style="font-size:11px;color:#888;">播放变速:</span>
+                            <input type="number" id="rbt-hook-speed" list="rbt-hook-speed-presets" value="1" step="0.05" min="0.1" max="10" style="background:#111;color:#fff;border:1px solid #333;padding:4px;width:70px;text-align:center;">
+                            <datalist id="rbt-hook-speed-presets">
+                                <option value="0.25">0.25x</option>
+                                <option value="0.5">0.5x</option>
+                                <option value="0.75">0.75x</option>
+                                <option value="1">1.0x</option>
+                                <option value="1.25">1.25x</option>
+                                <option value="1.5">1.5x</option>
+                                <option value="2">2.0x</option>
+                                <option value="3">3.0x</option>
+                            </datalist>
+                        </div>
+                    </div>
+
+                    <div style="background:#222;padding:10px;border-radius:4px;display:flex;flex-direction:column;gap:8px;border:1px solid #333;">
+                        <span style="font-size:11px;color:#888;">正片转场 (Transition)</span>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <select id="rbt-hook-transition" style="flex:1;background:#111;color:#fff;border:1px solid #333;padding:4px;font-size:11px;">
+                                <option value="none" selected>⚡ 无转场 (直接硬切)</option>
+                                <option value="fade">⚫ Fade 黑场淡入淡出</option>
+                                <option value="fadeblack">⚫ FadeBlack 强黑场过渡</option>
+                                <option value="fadewhite">⚪ FadeWhite 强白场过渡</option>
+                                <option value="dissolve">✨ Dissolve 溶解叠化</option>
+                                <option value="wipeleft">⬅️ Wipe Left 向左擦除</option>
+                                <option value="wiperight">➡️ Wipe Right 向右擦除</option>
+                                <option value="slideleft">🔙 Slide Left 向左推移</option>
+                                <option value="slideright">🔜 Slide Right 向右推移</option>
+                                <option value="rectcrop">🔲 RectCrop 矩形扩散</option>
+                                <option value="circlecrop">⭕ CircleCrop 圆形扩散</option>
+                            </select>
+                            <span style="font-size:11px;color:#888;">时长(s):</span>
+                            <input type="number" id="rbt-hook-trans-dur" value="0.5" step="0.1" min="0.1" max="5.0" style="width:50px;background:#111;color:#fff;border:1px solid #333;padding:4px;text-align:center;">
+                        </div>
+                    </div>
+                    
+                    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:4px;">
+                        <button class="rbt-btn" id="rbt-hook-cancel" style="padding:6px 16px;">取消</button>
+                        <button class="rbt-btn rbt-btn-primary" id="rbt-hook-save" style="padding:6px 16px;">保存配置</button>
+                    </div>
+                </div>
             </div>
         </div>
     `;
@@ -569,6 +681,26 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
         bgContent = `<span class="rbt-file-name" title="">${bgContent}</span>`;
     }
 
+    // Hook缩略图生成
+    const hookName = _shortName(task.hookFile || '');
+    let hookContent = hookName || '<span class="rbt-placeholder">拖拽/双击配置</span>';
+    if (task.hookFile) {
+        const hIsImg = /\.(jpg|jpeg|png|webp|gif|bmp)$/i.test(task.hookFile);
+        const hUrlObj = window.electronAPI && window.electronAPI.toFileUrl ? window.electronAPI.toFileUrl(task.hookFile) : `file://${task.hookFile}`;
+        hookContent = `<div class="rbt-hook-set" style="display:flex;align-items:center;gap:4px;cursor:pointer;" title="双击重新配置\n${_escHtml(task.hookFile)}">
+                            ${hIsImg ? 
+                                `<img src="${_escHtml(hUrlObj)}" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;">` :
+                                `<video src="${_escHtml(hUrlObj)}#t=0.5" preload="metadata" style="width:28px;height:28px;object-fit:cover;border-radius:3px;flex-shrink:0;background:#111;"></video>`
+                            }
+                            <div style="flex:1;display:flex;flex-direction:column;min-width:0;line-height:1.2;">
+                              <span class="rbt-file-name" style="font-size:10px;word-break:break-all;">${_escHtml(hookName)}</span>
+                              <span style="font-size:9px;color:#a0d0ff;">${task.hookTransition && task.hookTransition !== 'none' ? `✨${task.hookTransition}(${task.hookTransDuration || 0.5}s)` : '⚡硬切'} | ${task.hookSpeed ? task.hookSpeed + 'x' : '1x'}</span>
+                            </div>
+                       </div>`;
+    } else {
+        hookContent = `<div class="rbt-hook-set" style="cursor:pointer;" title="双击配置Hook属性"><span class="rbt-file-name" title="">${hookContent}</span></div>`;
+    }
+
     const subTplOptions = subtitlePresets.map(t =>
         `<option value="${_escHtml(t)}" ${task._subtitlePreset === t ? 'selected' : ''}>${_escHtml(t)}</option>`
     ).join('');
@@ -582,16 +714,55 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
             <td class="rbt-col-drag"><span class="rbt-drag-handle" title="拖拽调整顺序">☰</span></td>
             <td class="rbt-col-chk" style="text-align:center;"><input type="checkbox" class="rbt-row-check" data-idx="${idx}" ${_batchTableState.selectedRows.has(idx) ? 'checked' : ''}></td>
             <td class="rbt-col-num">${idx + 1}</td>
+            <td class="rbt-col-hook rbt-droppable" data-field="hook">
+                <div style="display:flex;align-items:center;gap:2px;">
+                    <div style="flex:1;min-width:0;overflow:hidden;">${hookContent}</div>
+                    ${task.hookFile ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="hook" title="清除前置Hook">✕</button>` : ''}
+                </div>
+            </td>
             <td class="rbt-col-bg rbt-droppable" data-field="bg">
                 <div style="display:flex;align-items:center;gap:2px;">
                     <div style="flex:1;min-width:0;overflow:hidden;">${bgContent}</div>
                     ${bgPath ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="bg" title="清除背景">✕</button>` : ''}
                 </div>
             </td>
+            <td class="rbt-col-bgscale">
+                <div style="display:flex;flex-direction:column;gap:2px;align-items:center;min-width:70px;">
+                    <input type="range" class="rbt-bgscale-slider" data-idx="${idx}" min="50" max="300" value="${task.bgScale || 100}"
+                           style="width:60px;height:14px;accent-color:#4fc3f7;" title="背景图片缩放比例">
+                    <div style="display:flex;align-items:center;gap:2px;">
+                        <input type="number" class="rbt-bgscale-input" data-idx="${idx}" min="50" max="300" step="5"
+                               value="${task.bgScale || 100}" style="width:42px;text-align:center;font-size:10px;padding:1px 2px;background:#1a1a2e;color:#ccc;border:1px solid #333;border-radius:3px;">
+                        <span style="font-size:10px;color:#666;">%</span>
+                    </div>
+                </div>
+            </td>
+            <td class="rbt-col-bgdurscale">
+                <div style="display:flex;flex-direction:column;gap:2px;align-items:center;min-width:70px;">
+                    <input type="range" class="rbt-bgdurscale-slider" data-idx="${idx}" min="10" max="500" value="${task.bgDurScale || 100}"
+                           style="width:60px;height:14px;accent-color:#81c784;" title="背景素材时长缩放比例">
+                    <div style="display:flex;align-items:center;gap:2px;">
+                        <input type="number" class="rbt-bgdurscale-input" data-idx="${idx}" min="10" max="500" step="5"
+                               value="${task.bgDurScale || 100}" style="width:42px;text-align:center;font-size:10px;padding:1px 2px;background:#1a1a2e;color:#ccc;border:1px solid #333;border-radius:3px;">
+                        <span style="font-size:10px;color:#666;">%</span>
+                    </div>
+                </div>
+            </td>
             <td class="rbt-col-audio rbt-droppable" data-field="audio">
                 <div style="display:flex;align-items:center;gap:2px;">
                     <span class="rbt-file-name" style="flex:1" title="双击加载 | ${_escHtml(task.audioPath || '')}">${audioName || '<span class="rbt-placeholder">双击加载</span>'}</span>
-                    ${audioName ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="audio" title="清除音频">✕</button>` : ''}
+                    ${audioName ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="audio" title="清除人声">✕</button>` : ''}
+                </div>
+            </td>
+            <td class="rbt-col-audiodurscale">
+                <div style="display:flex;flex-direction:column;gap:2px;align-items:center;min-width:70px;">
+                    <input type="range" class="rbt-audiodurscale-slider" data-idx="${idx}" min="10" max="500" value="${task.audioDurScale || 100}"
+                           style="width:60px;height:14px;accent-color:#ffb74d;" title="人声变速比例">
+                    <div style="display:flex;align-items:center;gap:2px;">
+                        <input type="number" class="rbt-audiodurscale-input" data-idx="${idx}" min="10" max="500" step="5"
+                               value="${task.audioDurScale || 100}" style="width:42px;text-align:center;font-size:10px;padding:1px 2px;background:#1a1a2e;color:#ccc;border:1px solid #333;border-radius:3px;">
+                        <span style="font-size:10px;color:#666;">%</span>
+                    </div>
                 </div>
             </td>
             <td class="rbt-col-srt rbt-droppable" data-field="srt">
@@ -602,7 +773,7 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
             </td>
             <td class="rbt-col-txtcontent">
                 <div style="position:relative;">
-                    <textarea class="rbt-textarea rbt-txtcontent-input" data-idx="${idx}" rows="3" placeholder="粘贴或输入文案...">${_escHtml(task.txtContent || '')}</textarea>
+                    <textarea class="rbt-textarea rbt-txtcontent-input" data-idx="${idx}" rows="2" placeholder="粘贴或输入文案..." title="双击放大编辑">${_escHtml(task.txtContent || '')}</textarea>
                     ${task.txtContent ? `<button class="rbt-field-clear" data-idx="${idx}" data-field="txt" title="清除文案" style="position:absolute;top:2px;right:2px;">✕</button>` : ''}
                 </div>
                 <div style="display:flex;align-items:center;gap:4px;margin-top:2px;">
@@ -625,19 +796,19 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
                 </div>
             </td>
             <td class="rbt-col-title">
-                <textarea class="rbt-textarea rbt-title-input" data-idx="${idx}" rows="2">${_escHtml(title)}</textarea>
+                <textarea class="rbt-textarea rbt-title-input" data-idx="${idx}" rows="2" title="双击放大编辑">${_escHtml(title)}</textarea>
             </td>
             <td class="rbt-col-body">
-                <textarea class="rbt-textarea rbt-body-input" data-idx="${idx}" rows="2">${_escHtml(body)}</textarea>
+                <textarea class="rbt-textarea rbt-body-input" data-idx="${idx}" rows="2" title="双击放大编辑">${_escHtml(body)}</textarea>
             </td>
             <td class="rbt-col-footer">
-                <textarea class="rbt-textarea rbt-footer-input" data-idx="${idx}" rows="2">${_escHtml(footer)}</textarea>
+                <textarea class="rbt-textarea rbt-footer-input" data-idx="${idx}" rows="2" title="双击放大编辑">${_escHtml(footer)}</textarea>
             </td>
             <td class="rbt-col-scroll-title">
-                <textarea class="rbt-textarea rbt-scroll-title-input" data-idx="${idx}" rows="2">${_escHtml(scrollTitle)}</textarea>
+                <textarea class="rbt-textarea rbt-scroll-title-input" data-idx="${idx}" rows="2" title="双击放大编辑">${_escHtml(scrollTitle)}</textarea>
             </td>
             <td class="rbt-col-scroll-body">
-                <textarea class="rbt-textarea rbt-scroll-body-input" data-idx="${idx}" rows="3">${_escHtml(scrollBody)}</textarea>
+                <textarea class="rbt-textarea rbt-scroll-body-input" data-idx="${idx}" rows="2" title="双击放大编辑">${_escHtml(scrollBody)}</textarea>
             </td>
             <td class="rbt-col-dur">
                 <input type="number" class="rbt-textarea rbt-dur-input" data-idx="${idx}" min="0" max="600" step="0.5"
@@ -664,12 +835,19 @@ function _renderBatchRow(task, idx, subtitlePresets, cardTemplates) {
     `;
 }
 
+
 // ═══════════════════════════════════════════════════════
 // 5. Event Binding
 // ═══════════════════════════════════════════════════════
 
 function _bindBatchTableEvents() {
     const container = _batchTableState.container;
+
+    // Toggle actions
+    container.querySelector('#rbt-toggle-actions-btn')?.addEventListener('click', () => {
+        _batchTableState.actionsCollapsed = !_batchTableState.actionsCollapsed;
+        _renderBatchTable();
+    });
 
     // Close
     container.querySelector('#rbt-close-btn')?.addEventListener('click', () => reelsToggleBatchTable());
@@ -728,6 +906,106 @@ function _bindBatchTableEvents() {
         _refreshMaterialFolder();
     });
 
+    // ══ Hook Batch settings ══
+    container.querySelector('#rbt-upload-hook')?.addEventListener('click', () => {
+        const indices = _getSelectedIndices();
+        if (indices.length === 0) {
+            alert('请先在左侧勾选需要批量配置前置Hook的行');
+            return;
+        }
+        _openHookModal(-1);
+    });
+
+    const hookModal = container.querySelector('#rbt-hook-modal');
+    if (hookModal) {
+        container.querySelector('#rbt-hook-select-btn')?.addEventListener('click', async () => {
+            if (window.electronAPI && window.electronAPI.selectFile) {
+                const res = await window.electronAPI.selectFile({
+                    title: '选择前置Hook短片',
+                    properties: ['openFile'],
+                    filters: [{name: '视频文件', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi']}]
+                });
+                if (res && res.length > 0) {
+                    container.querySelector('#rbt-hook-path').value = res[0];
+                    _updateHookPreview();
+                }
+            }
+        });
+        
+        container.querySelector('#rbt-hook-start')?.addEventListener('input', () => {
+            const videoPreview = container.querySelector('#rbt-hook-preview-video');
+            const startInput = container.querySelector('#rbt-hook-start');
+            if (videoPreview && startInput && videoPreview.readyState >= 1) {
+                const startTime = parseFloat(startInput.value) || 0;
+                videoPreview.currentTime = startTime;
+            }
+        });
+
+        container.querySelector('#rbt-hook-mark-start')?.addEventListener('click', () => {
+            const videoPreview = container.querySelector('#rbt-hook-preview-video');
+            const startInput = container.querySelector('#rbt-hook-start');
+            if (videoPreview && startInput && videoPreview.readyState >= 1) {
+                startInput.value = Math.round(videoPreview.currentTime * 10) / 10;
+            }
+        });
+
+        container.querySelector('#rbt-hook-mark-end')?.addEventListener('click', () => {
+            const videoPreview = container.querySelector('#rbt-hook-preview-video');
+            const endInput = container.querySelector('#rbt-hook-end');
+            if (videoPreview && endInput && videoPreview.readyState >= 1) {
+                endInput.value = Math.round(videoPreview.currentTime * 10) / 10;
+            }
+        });
+
+        container.querySelector('#rbt-hook-cancel')?.addEventListener('click', () => {
+            const videoPreview = container.querySelector('#rbt-hook-preview-video');
+            if (videoPreview) {
+                videoPreview.pause();
+                videoPreview.removeAttribute('src');
+                videoPreview.load();
+            }
+            hookModal.style.display = 'none';
+        });
+        container.querySelector('#rbt-hook-save')?.addEventListener('click', () => {
+            const videoPreview = container.querySelector('#rbt-hook-preview-video');
+            if (videoPreview) {
+                videoPreview.pause();
+                videoPreview.removeAttribute('src');
+                videoPreview.load();
+            }
+            const idxStr = hookModal.dataset.editIdx;
+            if (!idxStr) return;
+            const idx = parseInt(idxStr);
+            const hookFile = container.querySelector('#rbt-hook-path').value.trim();
+            const startVal = container.querySelector('#rbt-hook-start').value;
+            const endVal = container.querySelector('#rbt-hook-end').value;
+            const hookSpeed = parseFloat(container.querySelector('#rbt-hook-speed').value) || 1;
+            const hookTrans = container.querySelector('#rbt-hook-transition').value || 'none';
+            const hookTransDur = parseFloat(container.querySelector('#rbt-hook-trans-dur').value) || 0.5;
+
+            const applyToTask = (task) => {
+                task.hookFile = hookFile;
+                task.hookTrimStart = startVal !== '' ? parseFloat(startVal) : null;
+                task.hookTrimEnd = endVal !== '' ? parseFloat(endVal) : null;
+                task.hookSpeed = hookSpeed;
+                task.hookTransition = hookTrans;
+                task.hookTransDuration = hookTransDur;
+            };
+
+            if (idx >= 0) {
+                applyToTask(window._reelsState.tasks[idx]);
+            } else {
+                const indices = _getSelectedIndices();
+                indices.forEach(i => {
+                    const task = window._reelsState.tasks[i];
+                    if (task) applyToTask(task);
+                });
+            }
+            hookModal.style.display = 'none';
+            _renderBatchTable();
+        });
+    }
+
     // ══ Batch selection events ══
     container.querySelector('#rbt-select-all')?.addEventListener('change', (e) => {
         const tasks = window._reelsState.tasks || [];
@@ -783,6 +1061,28 @@ function _bindBatchTableEvents() {
         }
         _renderBatchTable();
         alert(`✅ 已将覆层预设「${val}」应用到 ${indices.length} 行`);
+    });
+
+    // ══ Batch scale apply ══
+    container.querySelector('#rbt-apply-batch-scale')?.addEventListener('click', () => {
+        const indices = _getSelectedIndices();
+        if (indices.length === 0) { alert('请先勾选需要批量设置的行'); return; }
+        const bgScale = parseInt(container.querySelector('#rbt-batch-bgscale')?.value) || 100;
+        const bgDurScale = parseInt(container.querySelector('#rbt-batch-bgdurscale')?.value) || 100;
+        const audioDurScale = parseInt(container.querySelector('#rbt-batch-audiodurscale')?.value) || 100;
+        const parts = [];
+        for (const idx of indices) {
+            const task = window._reelsState.tasks[idx];
+            if (!task) continue;
+            task.bgScale = bgScale;
+            task.bgDurScale = bgDurScale;
+            task.audioDurScale = audioDurScale;
+        }
+        if (bgScale !== 100) parts.push(`背景缩放${bgScale}%`);
+        if (bgDurScale !== 100) parts.push(`背景时长${bgDurScale}%`);
+        if (audioDurScale !== 100) parts.push(`音频时长${audioDurScale}%`);
+        _renderBatchTable();
+        alert(`✅ 已将缩放设置 ${parts.length > 0 ? '(' + parts.join(', ') + ')' : '(100%)'} 应用到 ${indices.length} 行`);
     });
 
     // Add row
@@ -977,9 +1277,9 @@ function _bindBatchTableEvents() {
         // 按扩展名分类
         const bgExts = new Set(['mp4', 'mov', 'mkv', 'avi', 'wmv', 'flv', 'webm', 'jpg', 'jpeg', 'png', 'webp']);
         const audioExts = new Set(['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'wma']);
-        const groups = { bg: [], audio: [], srt: [], txt: [] };
+        const groups = { hook: [], bg: [], audio: [], srt: [], txt: [] };
         const forcedVideoRoute = _batchTableState.videoDropRouteEnabled
-            ? (_batchTableState.videoDropRouteMode === 'audio' ? 'audio' : 'bg')
+            ? _batchTableState.videoDropRouteMode
             : null;
 
         for (const f of files) {
@@ -989,12 +1289,17 @@ function _bindBatchTableEvents() {
             else if (audioExts.has(ext)) groups.audio.push(f);
             else if (_VOICE_VIDEO_EXTS.has(ext) && forcedVideoRoute === 'audio') groups.audio.push(f);
             else if (_VOICE_VIDEO_EXTS.has(ext) && forcedVideoRoute === 'bg') groups.bg.push(f);
+            else if (_VOICE_VIDEO_EXTS.has(ext) && forcedVideoRoute === 'hook') groups.hook.push(f);
             else if (_VOICE_VIDEO_EXTS.has(ext) && _looksLikeVoiceTrack(f.name || '')) groups.audio.push(f);
-            else if (bgExts.has(ext)) groups.bg.push(f);
+            else if (bgExts.has(ext)) {
+                if (forcedVideoRoute === 'hook') groups.hook.push(f);
+                else groups.bg.push(f);
+            }
         }
 
         // 按类型依次分配（最多的类型先处理，其他自动填充）
         const assignments = [];
+        if (groups.hook.length) assignments.push(['hook', groups.hook]);
         if (groups.bg.length) assignments.push(['bg', groups.bg]);
         if (groups.audio.length) assignments.push(['audio', groups.audio]);
         if (groups.srt.length) assignments.push(['srt', groups.srt]);
@@ -1137,6 +1442,51 @@ function _bindBatchTableEvents() {
                     }
                 }
             }
+            // ── 背景缩放 slider↔input 同步 ──
+            if (e.target.classList.contains('rbt-bgscale-slider')) {
+                const numInput = e.target.parentElement.querySelector('.rbt-bgscale-input');
+                if (numInput) numInput.value = e.target.value;
+                const idx = parseInt(e.target.dataset.idx);
+                const task = window._reelsState && window._reelsState.tasks[idx];
+                if (task) { task.bgScale = parseInt(e.target.value) || 100; console.log(`[Scale] row${idx} bgScale=${task.bgScale}`); }
+            }
+            if (e.target.classList.contains('rbt-bgscale-input')) {
+                const slider = e.target.closest('td').querySelector('.rbt-bgscale-slider');
+                if (slider) slider.value = e.target.value;
+                const idx = parseInt(e.target.dataset.idx);
+                const task = window._reelsState && window._reelsState.tasks[idx];
+                if (task) { task.bgScale = parseInt(e.target.value) || 100; console.log(`[Scale] row${idx} bgScale=${task.bgScale}`); }
+            }
+            // ── 背景时长缩放 slider↔input 同步 ──
+            if (e.target.classList.contains('rbt-bgdurscale-slider')) {
+                const numInput = e.target.parentElement.querySelector('.rbt-bgdurscale-input');
+                if (numInput) numInput.value = e.target.value;
+                const idx = parseInt(e.target.dataset.idx);
+                const task = window._reelsState && window._reelsState.tasks[idx];
+                if (task) { task.bgDurScale = parseInt(e.target.value) || 100; console.log(`[Scale] row${idx} bgDurScale=${task.bgDurScale}`); }
+            }
+            if (e.target.classList.contains('rbt-bgdurscale-input')) {
+                const slider = e.target.closest('td').querySelector('.rbt-bgdurscale-slider');
+                if (slider) slider.value = e.target.value;
+                const idx = parseInt(e.target.dataset.idx);
+                const task = window._reelsState && window._reelsState.tasks[idx];
+                if (task) { task.bgDurScale = parseInt(e.target.value) || 100; console.log(`[Scale] row${idx} bgDurScale=${task.bgDurScale}`); }
+            }
+            // ── 音频变速 slider↔input 同步 ──
+            if (e.target.classList.contains('rbt-audiodurscale-slider')) {
+                const numInput = e.target.parentElement.querySelector('.rbt-audiodurscale-input');
+                if (numInput) numInput.value = e.target.value;
+                const idx = parseInt(e.target.dataset.idx);
+                const task = window._reelsState && window._reelsState.tasks[idx];
+                if (task) { task.audioDurScale = parseInt(e.target.value) || 100; console.log(`[Scale] row${idx} audioDurScale=${task.audioDurScale}`); }
+            }
+            if (e.target.classList.contains('rbt-audiodurscale-input')) {
+                const slider = e.target.closest('td').querySelector('.rbt-audiodurscale-slider');
+                if (slider) slider.value = e.target.value;
+                const idx = parseInt(e.target.dataset.idx);
+                const task = window._reelsState && window._reelsState.tasks[idx];
+                if (task) { task.audioDurScale = parseInt(e.target.value) || 100; console.log(`[Scale] row${idx} audioDurScale=${task.audioDurScale}`); }
+            }
         });
         // Row checkbox change handler
         tbody.addEventListener('change', (e) => {
@@ -1194,6 +1544,11 @@ function _bindBatchTableEvents() {
                 const task = window._reelsState.tasks[idx];
                 if (!task) return;
                 switch (field) {
+                    case 'hook': 
+                        task.hookFile = ''; 
+                        task.hookSpeed = 1; 
+                        task.hookTransition = 'none'; 
+                        break;
                     case 'bg': task.bgPath = ''; task.videoPath = ''; task.bgSrcUrl = ''; break;
                     case 'audio': task.audioPath = ''; break;
                     case 'srt': task.srtPath = ''; task.aligned = false; break;
@@ -1204,10 +1559,23 @@ function _bindBatchTableEvents() {
                 return;
             }
         });
-        // 双击文件单元格 → 选择文件
+        // 双击放大编辑 及 双击文件单元格
         tbody.addEventListener('dblclick', (e) => {
+            if (e.target.tagName === 'TEXTAREA' && e.target.classList.contains('rbt-textarea')) {
+                _showTextEditorModal(e.target);
+                return;
+            }
+            const hookSet = e.target.closest('.rbt-hook-set');
+            if (hookSet) {
+                const row = hookSet.closest('.rbt-row');
+                if (row) {
+                    _openHookModal(parseInt(row.dataset.idx));
+                }
+                return;
+            }
+            // 双击文件单元格 → 选择文件
             const cell = e.target.closest('.rbt-droppable');
-            if (cell) {
+            if (cell && cell.dataset.field !== 'hook') {
                 const row = cell.closest('.rbt-row');
                 if (!row) return;
                 const idx = parseInt(row.dataset.idx);
@@ -1226,6 +1594,112 @@ function _bindBatchTableEvents() {
             }
         });
     }
+}
+
+// ═══════════════════════════════════════════════════════
+// 5.5 Text Editor Modal
+// ═══════════════════════════════════════════════════════
+
+function _showTextEditorModal(textareaEl) {
+    let editorWrap = document.getElementById('rbt-text-editor-modal');
+    if (!editorWrap) {
+        editorWrap = document.createElement('div');
+        editorWrap.id = 'rbt-text-editor-modal';
+        editorWrap.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:99999;background:rgba(0,0,0,0.85);display:none;align-items:center;justify-content:center;backdrop-filter:blur(4px);';
+        
+        const modalContent = document.createElement('div');
+        modalContent.style.cssText = 'width:80%;max-width:800px;background:#1a1a2e;border:1px solid #4a6a8a;border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:16px;box-shadow:0 12px 32px rgba(0,0,0,0.8);';
+        
+        const header = document.createElement('div');
+        header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;';
+        
+        const title = document.createElement('h3');
+        title.id = 'rbt-text-editor-title';
+        title.style.cssText = 'margin:0;color:#00D4FF;font-size:16px;';
+        title.innerText = '大屏幕文案编辑';
+        
+        const closeBtn = document.createElement('button');
+        closeBtn.innerHTML = '✕';
+        closeBtn.style.cssText = 'background:transparent;border:none;color:#aaa;font-size:18px;cursor:pointer;padding:4px;';
+        closeBtn.onclick = () => { editorWrap.style.display = 'none'; };
+        
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+        
+        const ta = document.createElement('textarea');
+        ta.id = 'rbt-text-editor-textarea';
+        ta.style.cssText = 'width:100%;height:450px;background:#111;color:#eee;border:1px solid #333;border-radius:6px;padding:12px;font-size:14px;line-height:1.6;box-sizing:border-box;font-family:monospace;resize:vertical;';
+        
+        const footer = document.createElement('div');
+        footer.style.cssText = 'display:flex;justify-content:flex-end;gap:12px;align-items:center;';
+        
+        const hint = document.createElement('span');
+        hint.style.cssText = 'color:#666;font-size:12px;flex:1;';
+        hint.innerText = '小提示：按 Esc 键可退出，Ctrl+Enter 可快速保存';
+        
+        const cancelBtn = document.createElement('button');
+        cancelBtn.innerText = '取消 (Esc)';
+        cancelBtn.style.cssText = 'padding:8px 20px;background:#333;color:#ccc;border:1px solid #444;border-radius:6px;cursor:pointer;font-size:13px;';
+        cancelBtn.onclick = () => { editorWrap.style.display = 'none'; };
+        
+        const saveBtn = document.createElement('button');
+        saveBtn.innerText = '保存内容 (Ctrl+Enter)';
+        saveBtn.id = 'rbt-text-editor-save';
+        saveBtn.style.cssText = 'padding:8px 24px;background:#00D4FF;color:#000;border:none;border-radius:6px;cursor:pointer;font-size:13px;font-weight:bold;';
+        
+        footer.appendChild(hint);
+        footer.appendChild(cancelBtn);
+        footer.appendChild(saveBtn);
+        
+        modalContent.appendChild(header);
+        modalContent.appendChild(ta);
+        modalContent.appendChild(footer);
+        editorWrap.appendChild(modalContent);
+        document.body.appendChild(editorWrap);
+        
+        ta.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                editorWrap.style.display = 'none';
+            }
+            if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                e.preventDefault();
+                saveBtn.click();
+            }
+        });
+        
+        // Block clicks from closing modal if clicking inside model content
+        modalContent.addEventListener('click', (e) => e.stopPropagation());
+        // Close modal if clicking outside
+        editorWrap.addEventListener('click', () => { editorWrap.style.display = 'none'; });
+    }
+
+    const modalTitle = document.getElementById('rbt-text-editor-title');
+    const modalTa = document.getElementById('rbt-text-editor-textarea');
+    const saveBtn = document.getElementById('rbt-text-editor-save');
+    
+    let titleStr = "大屏幕文案编辑";
+    if (textareaEl.classList.contains('rbt-txtcontent-input')) titleStr = "编辑【字幕文本】";
+    else if (textareaEl.classList.contains('rbt-title-input')) titleStr = "编辑【覆层标题】";
+    else if (textareaEl.classList.contains('rbt-body-input')) titleStr = "编辑【覆层内容】";
+    else if (textareaEl.classList.contains('rbt-footer-input')) titleStr = "编辑【覆层结尾】";
+    else if (textareaEl.classList.contains('rbt-scroll-title-input')) titleStr = "编辑【滚动标题】";
+    else if (textareaEl.classList.contains('rbt-scroll-body-input')) titleStr = "编辑【滚动内容】";
+    modalTitle.innerText = titleStr;
+    
+    modalTa.value = textareaEl.value;
+    editorWrap.style.display = 'flex';
+    modalTa.focus();
+    // highlight text gently
+    modalTa.setSelectionRange(modalTa.value.length, modalTa.value.length);
+    
+    saveBtn.onclick = () => {
+        textareaEl.value = modalTa.value;
+        // manually dispatch events so batch system picks it up immediately
+        textareaEl.dispatchEvent(new Event('input', { bubbles: true }));
+        textareaEl.dispatchEvent(new Event('change', { bubbles: true }));
+        editorWrap.style.display = 'none';
+    };
 }
 
 // ═══════════════════════════════════════════════════════
@@ -1333,7 +1807,31 @@ function _applyBatchTableChanges() {
         task.customDuration = v > 0 ? v : 0;
     });
 
-    // 文案内容（用于字幕对齐）
+    // 背景缩放
+    container.querySelectorAll('.rbt-bgscale-input').forEach(el => {
+        const idx = parseInt(el.dataset.idx);
+        const task = state.tasks[idx];
+        if (!task) return;
+        task.bgScale = parseInt(el.value) || 100;
+    });
+
+    // 背景时长缩放
+    container.querySelectorAll('.rbt-bgdurscale-input').forEach(el => {
+        const idx = parseInt(el.dataset.idx);
+        const task = state.tasks[idx];
+        if (!task) return;
+        task.bgDurScale = parseInt(el.value) || 100;
+    });
+
+    // 音频时长缩放
+    container.querySelectorAll('.rbt-audiodurscale-input').forEach(el => {
+        const idx = parseInt(el.dataset.idx);
+        const task = state.tasks[idx];
+        if (!task) return;
+        task.audioDurScale = parseInt(el.value) || 100;
+    });
+
+    // 字幕文本（用于字幕对齐）
     const txtContentInputs = container.querySelectorAll('.rbt-txtcontent-input');
     txtContentInputs.forEach(el => {
         const idx = parseInt(el.dataset.idx);
@@ -1589,10 +2087,14 @@ async function _batchPasteScrollFromSheet() {
 // ═══════════════════════════════════════════════════════
 
 const _RBT_COLUMNS = [
+    { key: 'hook', label: '🪝 前置Hook', default: true },
     { key: 'bg', label: '🖼 背景素材', default: true },
+    { key: 'bgscale', label: '🔍 背景缩放', default: true },
+    { key: 'bgdurscale', label: '⏱🖼 背景时长', default: true },
     { key: 'audio', label: '🔊 音频', default: true },
-    { key: 'srt', label: '📝 字幕', default: true },
-    { key: 'txtcontent', label: '📃 文案内容', default: true },
+    { key: 'audiodurscale', label: '⏱🔊 音频变速', default: true },
+    { key: 'srt', label: '📝 字幕SRT', default: true },
+    { key: 'txtcontent', label: '📃 字幕文本', default: true },
     { key: 'bgm', label: '🎵 配乐', default: true },
     { key: 'title', label: '📋 覆层标题', default: true },
     { key: 'body', label: '📋 覆层内容', default: true },
@@ -1611,12 +2113,26 @@ function _getColVisStorageKey() {
 function _getColVisibility() {
     const key = _getColVisStorageKey();
     const saved = localStorage.getItem(key);
-    if (saved) {
-        try { return JSON.parse(saved); } catch (e) { }
-    }
-    // defaults — all visible
+    // 始终以 _RBT_COLUMNS 的 default 为基准，合并已保存的设置
     const vis = {};
     for (const col of _RBT_COLUMNS) vis[col.key] = col.default;
+    if (saved) {
+        try {
+            const parsed = JSON.parse(saved);
+            for (const col of _RBT_COLUMNS) {
+                if (col.key in parsed) vis[col.key] = parsed[col.key];
+            }
+            // 一次性迁移：旧版本中缩放列默认隐藏，新版本默认显示
+            const migKey = key + '-scale-migrated';
+            if (!localStorage.getItem(migKey)) {
+                vis['bgscale'] = true;
+                vis['bgdurscale'] = true;
+                vis['audiodurscale'] = true;
+                localStorage.setItem(migKey, '1');
+                _saveColVisibility(vis);
+            }
+        } catch (e) { }
+    }
     return vis;
 }
 
@@ -2071,7 +2587,7 @@ function _doCycleFill(fieldKey, items, weights, mode) {
 }
 
 /**
- * 从剪贴板批量粘贴文案到「文案内容」列 (txtContent)
+ * 从剪贴板批量粘贴文案到「字幕文本」列 (txtContent)
  * 支持：
  * - 单列：每行一条文案
  * - 多列表格：取第一列
@@ -2133,7 +2649,7 @@ async function _batchPasteTxtContent() {
     const parts = [];
     if (filled) parts.push(`填充 ${filled} 行`);
     if (created) parts.push(`新建 ${created} 行`);
-    alert(`✅ 文案内容粘贴完成：${parts.join('，')}`);
+    alert(`✅ 字幕文本粘贴完成：${parts.join('，')}`);
 }
 
 // ── 辅助：设置一行的文案 ──
@@ -2544,6 +3060,97 @@ function _batchImportFolder(files) {
 // 9b. File assignment helpers
 // ═══════════════════════════════════════════════════════
 
+function _openHookModal(idx) {
+    const container = _batchTableState.container;
+    if (!container) return;
+    const hookModal = container.querySelector('#rbt-hook-modal');
+    if (!hookModal) return;
+
+    hookModal.dataset.editIdx = String(idx);
+
+    // Initial clear
+    const pathInput = container.querySelector('#rbt-hook-path');
+    const startInput = container.querySelector('#rbt-hook-start');
+    const endInput = container.querySelector('#rbt-hook-end');
+    const speedInput = container.querySelector('#rbt-hook-speed');
+    const transInput = container.querySelector('#rbt-hook-transition');
+    const durInput = container.querySelector('#rbt-hook-trans-dur');
+
+    if (pathInput) pathInput.value = '';
+    if (startInput) startInput.value = '';
+    if (endInput) endInput.value = '';
+    if (speedInput) speedInput.value = '1';
+    if (transInput) transInput.value = 'none';
+    if (durInput) durInput.value = '0.5';
+
+    let targetTask = null;
+    if (idx >= 0) {
+        targetTask = window._reelsState.tasks[idx];
+    } else {
+        const indices = _getSelectedIndices();
+        if (indices.length > 0) {
+            targetTask = window._reelsState.tasks[indices[0]];
+        }
+    }
+
+    if (targetTask) {
+        if (pathInput) pathInput.value = targetTask.hookFile || '';
+        if (startInput) startInput.value = targetTask.hookTrimStart != null ? targetTask.hookTrimStart : '';
+        if (endInput) endInput.value = targetTask.hookTrimEnd != null ? targetTask.hookTrimEnd : '';
+        if (speedInput) speedInput.value = targetTask.hookSpeed || '1';
+        if (transInput) transInput.value = targetTask.hookTransition || 'none';
+        if (durInput) durInput.value = targetTask.hookTransDuration || '0.5';
+    }
+
+    _updateHookPreview();
+    hookModal.style.display = 'flex';
+}
+
+function _updateHookPreview() {
+    const container = _batchTableState.container;
+    if (!container) return;
+    const pathInput = container.querySelector('#rbt-hook-path');
+    const previewContainer = container.querySelector('#rbt-hook-preview-container');
+    const videoPreview = container.querySelector('#rbt-hook-preview-video');
+    const imgPreview = container.querySelector('#rbt-hook-preview-img');
+    const startInput = container.querySelector('#rbt-hook-start');
+    
+    if (!pathInput || !previewContainer || !videoPreview || !imgPreview) return;
+    
+    const filePath = pathInput.value.trim();
+    if (!filePath) {
+        previewContainer.style.display = 'none';
+        videoPreview.src = '';
+        imgPreview.src = '';
+        return;
+    }
+    
+    previewContainer.style.display = 'block';
+    const fileUrl = 'file://' + filePath;
+    const ext = filePath.split('.').pop().toLowerCase();
+    
+    if (['mp4', 'webm', 'ogg', 'mov', 'mkv'].includes(ext)) {
+        imgPreview.style.display = 'none';
+        videoPreview.style.display = 'block';
+        if (videoPreview.src !== fileUrl) {
+            videoPreview.src = fileUrl;
+            videoPreview.onloadedmetadata = () => {
+                const startTime = parseFloat(startInput?.value) || 0;
+                videoPreview.currentTime = startTime;
+            };
+        } else {
+            const startTime = parseFloat(startInput?.value) || 0;
+            videoPreview.currentTime = startTime;
+        }
+    } else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)) {
+        videoPreview.style.display = 'none';
+        imgPreview.style.display = 'block';
+        imgPreview.src = fileUrl;
+    } else {
+        previewContainer.style.display = 'none';
+    }
+}
+
 /**
  * 显示批量分配模式对话框
  */
@@ -2570,7 +3177,10 @@ function _showBatchModeDialog(fileCount, field) {
                 ${isSingle ? `<button data-mode="applyall" style="padding:10px 16px;border:1px solid #7b5aab;border-radius:8px;background:#3a2a5a;color:#d0b0ff;cursor:pointer;text-align:left;font-size:13px;">
                     🔄 <b>应用到全部行</b> — 所有行都用这个文件
                 </button>` : ''}
-                ${field === 'bg' ? `<button data-mode="fill_audio" style="padding:10px 16px;border:1px solid #5a8a5a;border-radius:8px;background:#2a4a3a;color:#a0e0c0;cursor:pointer;text-align:left;font-size:13px;">
+                ${field === 'bg' ? `<button data-mode="fill_hook" style="padding:10px 16px;border:1px solid #7a6a4a;border-radius:8px;background:#3a3a2a;color:#e0d0a0;cursor:pointer;text-align:left;font-size:13px;margin-bottom:8px;">
+                    🪝 <b>填充到前置Hook</b> — 将视频/图片填入Hook列
+                </button>
+                <button data-mode="fill_audio" style="padding:10px 16px;border:1px solid #5a8a5a;border-radius:8px;background:#2a4a3a;color:#a0e0c0;cursor:pointer;text-align:left;font-size:13px;">
                     🎙 <b>填充到音频</b> — 将视频填入音频列
                 </button>` : ''}
             </div>
@@ -2591,7 +3201,12 @@ function _showBatchModeDialog(fileCount, field) {
 /** 将文件应用到任务 */
 function _assignFileToTask(task, file, field) {
     const filePath = (typeof getFileNativePath === 'function') ? getFileNativePath(file) : (file.path || file.name);
-    if (field === 'bg') {
+    if (field === 'hook') {
+        task.hookFile = filePath;
+        if (task.hookSpeed == null) task.hookSpeed = 1;
+        if (task.hookTransition == null) task.hookTransition = 'none';
+        if (task.hookTransDuration == null) task.hookTransDuration = 0.5;
+    } else if (field === 'bg') {
         task.bgPath = filePath;
         task.videoPath = filePath;
         try { task.bgSrcUrl = URL.createObjectURL(file); } catch (e) { }
@@ -2648,7 +3263,8 @@ async function _batchAssignFiles(files, field) {
             while (taskIdx < state.tasks.length) {
                 const tk = state.tasks[taskIdx];
                 let occupied = false;
-                if (field === 'bg') occupied = !!(tk.bgPath || tk.videoPath);
+                if (field === 'hook') occupied = !!tk.hookFile;
+                else if (field === 'bg') occupied = !!(tk.bgPath || tk.videoPath);
                 else if (field === 'audio') occupied = !!tk.audioPath;
                 else if (field === 'srt') occupied = !!tk.srtPath;
                 else if (field === 'txt') occupied = !!tk.txtPath;
@@ -2689,6 +3305,20 @@ async function _batchAssignFiles(files, field) {
                 state.tasks.push(_createEmptyTask());
             }
             _assignFileToTask(state.tasks[taskIdx], file, 'audio');
+            taskIdx++;
+        }
+    } else if (mode === 'fill_hook') {
+        // 将文件填充到Hook列（补全空位）
+        let taskIdx = 0;
+        for (const file of files) {
+            while (taskIdx < state.tasks.length) {
+                if (!state.tasks[taskIdx].hookFile) break;
+                taskIdx++;
+            }
+            if (taskIdx >= state.tasks.length) {
+                state.tasks.push(_createEmptyTask());
+            }
+            _assignFileToTask(state.tasks[taskIdx], file, 'hook');
             taskIdx++;
         }
     }
@@ -2807,6 +3437,8 @@ function _assignSingleFile(idx, field, file) {
     const task = state.tasks[idx];
     const filePath = (typeof getFileNativePath === 'function') ? getFileNativePath(file) : (file.path || file.name);
 
+    console.log(`[BatchTable] _assignSingleFile idx=${idx} field=${field} filePath=${filePath} file.name=${file.name}`);
+
     if (field === 'bg') {
         task.bgPath = filePath;
         task.videoPath = filePath;
@@ -2816,6 +3448,7 @@ function _assignSingleFile(idx, field, file) {
     } else if (field === 'srt') {
         task.srtPath = filePath;
         _readSrtFileToTask(task, file);
+        console.log(`[BatchTable] After _readSrtFileToTask: segments.length=${(task.segments||[]).length}`);
     } else if (field === 'txt') {
         task.txtPath = filePath;
         _readTxtFileToTask(task, file);
@@ -2829,17 +3462,63 @@ function _assignSingleFile(idx, field, file) {
  * 读取 SRT 文件内容到 task.segments
  */
 function _readSrtFileToTask(task, file) {
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-        const content = ev.target.result;
-        if (typeof _parseSrt === 'function') {
-            task.segments = _parseSrt(content);
-        } else {
-            // 简单解析
-            task.segments = [];
+    const filePath = task.srtPath;
+    console.log('[SRT] _readSrtFileToTask called, filePath:', filePath, 'hasFile:', !!file);
+
+    // 优先用 FileReader — 直接读 File 对象的 blob 内容，不依赖路径，Electron 和浏览器通用
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const content = ev.target.result;
+            console.log('[SRT] FileReader result, content length:', content?.length);
+            if (!content) { console.warn('[SRT] FileReader returned empty'); return; }
+            _parseSrtContent(task, content);
+            console.log('[SRT] ✅ loaded via FileReader, segments:', task.segments?.length);
+            if (_batchTableState.visible) _renderBatchTable();
+            if (typeof _renderTaskList === 'function') _renderTaskList();
+        };
+        reader.onerror = (err) => {
+            console.warn('[SRT] FileReader error:', err, '— trying electronAPI fallback');
+            _readSrtViaElectronAPI(task, filePath);
+        };
+        reader.readAsText(file);
+        return;
+    }
+
+    // 回退：用 Electron 同步 API（当只有路径没有 File 对象时）
+    _readSrtViaElectronAPI(task, filePath);
+}
+
+function _readSrtViaElectronAPI(task, filePath) {
+    if (filePath && window.electronAPI && window.electronAPI.readFileText) {
+        try {
+            const content = window.electronAPI.readFileText(filePath);
+            if (content) {
+                _parseSrtContent(task, content);
+                console.log('[SRT] ✅ loaded via electronAPI:', filePath, 'segments:', task.segments?.length);
+                if (_batchTableState.visible) _renderBatchTable();
+                if (typeof _renderTaskList === 'function') _renderTaskList();
+                return;
+            }
+        } catch (e) {
+            console.warn('[SRT] electronAPI.readFileText error:', e);
         }
-    };
-    reader.readAsText(file);
+    }
+    console.warn('[SRT] ❌ Failed to load SRT:', filePath);
+}
+
+function _parseSrtContent(task, content) {
+    // parseSRT 定义在 reels-canvas-renderer.js，暴露在 window.parseSRT
+    const parser = (typeof parseSRT === 'function') ? parseSRT : window.parseSRT;
+    if (parser) {
+        const rawSegs = parser(content).map(seg => ({ ...seg, _timeUnit: 'sec' }));
+        task.segments = window.ReelsSubtitleProcessor
+            ? ReelsSubtitleProcessor.srtToSegmentsWithWords(rawSegs)
+            : rawSegs;
+    } else {
+        console.error('[SRT] parseSRT function not found!');
+        task.segments = [];
+    }
 }
 
 /**
@@ -2911,7 +3590,7 @@ async function _batchAlignAllTasks() {
     const alignSource = document.getElementById('rbt-align-source')?.value || 'audio';
     const forceRealign = document.getElementById('rbt-force-realign')?.checked || false;
 
-    // 筛选需要对齐的任务: 有文案内容 + 有音频源 + (未对齐 或 强制)
+    // 筛选需要对齐的任务: 有字幕文本 + 有音频源 + (未对齐 或 强制)
     const tasksToAlign = state.tasks.filter(t => {
         if (!t.txtContent || !t.txtContent.trim()) return false;
         if (t.aligned && !forceRealign) return false;
@@ -2922,7 +3601,7 @@ async function _batchAlignAllTasks() {
     });
 
     if (tasksToAlign.length === 0) {
-        alert('没有需要对齐的任务。\n请确认：\n1. 文案内容列有文案\n2. 有音频/视频文件\n3. 尚未对齐');
+        alert('没有需要对齐的任务。\n请确认：\n1. 字幕文本列有文案\n2. 有音频/视频文件\n3. 尚未对齐');
         return;
     }
 
@@ -3211,10 +3890,10 @@ function _injectBatchTableCSS() {
             gap:12px;
         }
         .rbt-header h2 { margin:0; font-size:18px; color:#00D4FF; white-space:nowrap; flex-shrink:0; }
-        .rbt-actions { display:flex; flex-wrap:wrap; gap:6px 8px; align-items:center; }
+        .rbt-actions { display:none; /* overwritten by inline styles now */ }
         .rbt-btn {
-            padding:6px 14px; border-radius:6px; border:1px solid #333; background:#222;
-            color:#ccc; font-size:12px; cursor:pointer; transition:all .15s;
+            padding:3px 8px; border-radius:4px; border:1px solid #333; background:#222;
+            color:#ccc; font-size:11px; cursor:pointer; transition:all .15s;
         }
         .rbt-btn:hover { background:#333; color:#fff; }
         .rbt-btn-accent { background:#00D4FF; color:#000; border-color:#00D4FF; font-weight:bold; }
@@ -3246,6 +3925,7 @@ function _injectBatchTableCSS() {
         .rbt-row:hover { background:rgba(0,212,255,0.05); }
         .rbt-row-selected { background:rgba(0,212,255,0.1) !important; }
         .rbt-col-num { width:40px; text-align:center; color:#666; font-weight:bold; }
+        .rbt-col-hook { width:140px; }
         .rbt-col-bg { width:140px; }
         .rbt-col-audio { width:120px; }
         .rbt-col-srt { width:120px; }

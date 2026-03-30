@@ -1,4 +1,4 @@
-# pyMediaTools Electron - Dependencies
+# VideoKit - Dependencies
 
 This app uses a Python backend and FFmpeg tools. The app can try to install
 Python packages automatically on first launch, but you can also install

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, powerSaveBlocker, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, powerSaveBlocker, protocol, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const ffmpegService = require('./services/ffmpeg');
@@ -121,7 +121,7 @@ function createWindow() {
         height: 800,
         minWidth: 900,
         minHeight: 700,
-        title: 'pyMediaTools',
+        title: 'VideoKit',
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -285,6 +285,11 @@ app.whenReady().then(async () => {
         return handleWysiwygIPC(action, data);
     });
 
+    // IPC: 视频首尾拼接 (Hook -> Main)
+    ipcMain.handle('concat-video', async (event, payload) => {
+        return ffmpegService.concatVideo(payload);
+    });
+
     // IPC: 保存 Web Audio 离线渲染的音频（WYSIWYG 混音）
     ipcMain.handle('save-rendered-audio', async (event, wavData) => {
         const settingsService = require('./services/settings');
@@ -328,6 +333,11 @@ app.whenReady().then(async () => {
         try { fs.unlinkSync(wavPath); } catch (_) { }
         log(`[read-file-buffer] ${filePath} → WAV ${(buf.length / 1024 / 1024).toFixed(1)}MB`);
         return buf;
+    });
+
+    // IPC: 在 Finder/Explorer 中高亮文件
+    ipcMain.handle('show-item-in-folder', (event, fullPath) => {
+        if (fullPath && typeof fullPath === 'string') shell.showItemInFolder(fullPath);
     });
 
     // IPC: 扫描本地字体目录

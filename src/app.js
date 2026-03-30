@@ -182,10 +182,225 @@ document.addEventListener('DOMContentLoaded', () => {
     loadWatermarkSettings();  // 加载保存的水印设置
     checkBackendHealth();
     addToastStyles();
+    initSubtitleLangPicker();
 
     // 启动心跳检测（每30秒检查一次后端状态）
     startHeartbeat();
 });
+
+// ==================== 字幕面板语言搜索选择器 ====================
+
+const SUBTITLE_LANG_STORAGE_KEY = 'subtitle_align_language';
+
+/**
+ * 所有支持的语言列表 — 与 reels-batch-table.js 的 REELS_ALL_LANGUAGES 保持同步
+ * 直接内嵌以避免脚本加载顺序依赖
+ */
+const SUBTITLE_ALL_LANGUAGES = [
+    // ── 常用 (pinned) ──
+    { name: '英语', code: 'en', en: 'English', pinned: true },
+    { name: '中文', code: 'zh', en: 'Chinese', pinned: true },
+    { name: '日语', code: 'ja', en: 'Japanese', pinned: true },
+    { name: '韩语', code: 'ko', en: 'Korean', pinned: true },
+    { name: '西班牙语', code: 'es', en: 'Spanish', pinned: true },
+    { name: '法语', code: 'fr', en: 'French', pinned: true },
+    { name: '德语', code: 'de', en: 'German', pinned: true },
+    { name: '葡萄牙语', code: 'pt', en: 'Portuguese', pinned: true },
+    { name: '俄语', code: 'ru', en: 'Russian', pinned: true },
+    { name: '阿拉伯语', code: 'ar', en: 'Arabic', pinned: true },
+    { name: '粤语', code: 'yue', en: 'Cantonese', pinned: true },
+    { name: '意大利语', code: 'it', en: 'Italian', pinned: true },
+    // ── 亚洲 ──
+    { name: '印地语', code: 'hi', en: 'Hindi' },
+    { name: '泰语', code: 'th', en: 'Thai' },
+    { name: '越南语', code: 'vi', en: 'Vietnamese' },
+    { name: '印尼语', code: 'id', en: 'Indonesian' },
+    { name: '马来语', code: 'ms', en: 'Malay' },
+    { name: '泰米尔语', code: 'ta', en: 'Tamil' },
+    { name: '泰卢固语', code: 'te', en: 'Telugu' },
+    { name: '孟加拉语', code: 'bn', en: 'Bengali' },
+    { name: '卡纳达语', code: 'kn', en: 'Kannada' },
+    { name: '马拉雅拉姆语', code: 'ml', en: 'Malayalam' },
+    { name: '马拉地语', code: 'mr', en: 'Marathi' },
+    { name: '古吉拉特语', code: 'gu', en: 'Gujarati' },
+    { name: '旁遮普语', code: 'pa', en: 'Punjabi' },
+    { name: '僧伽罗语', code: 'si', en: 'Sinhala' },
+    { name: '尼泊尔语', code: 'ne', en: 'Nepali' },
+    { name: '乌尔都语', code: 'ur', en: 'Urdu' },
+    { name: '高棉语', code: 'km', en: 'Khmer' },
+    { name: '老挝语', code: 'lo', en: 'Lao' },
+    { name: '蒙古语', code: 'mn', en: 'Mongolian' },
+    { name: '缅甸语', code: 'my', en: 'Myanmar' },
+    { name: '藏语', code: 'bo', en: 'Tibetan' },
+    { name: '他加禄语', code: 'tl', en: 'Tagalog' },
+    { name: '爪哇语', code: 'jw', en: 'Javanese' },
+    { name: '巽他语', code: 'su', en: 'Sundanese' },
+    { name: '阿萨姆语', code: 'as', en: 'Assamese' },
+    // ── 欧洲 ──
+    { name: '荷兰语', code: 'nl', en: 'Dutch' },
+    { name: '波兰语', code: 'pl', en: 'Polish' },
+    { name: '土耳其语', code: 'tr', en: 'Turkish' },
+    { name: '瑞典语', code: 'sv', en: 'Swedish' },
+    { name: '芬兰语', code: 'fi', en: 'Finnish' },
+    { name: '丹麦语', code: 'da', en: 'Danish' },
+    { name: '挪威语', code: 'no', en: 'Norwegian' },
+    { name: '新挪威语', code: 'nn', en: 'Nynorsk' },
+    { name: '捷克语', code: 'cs', en: 'Czech' },
+    { name: '斯洛伐克语', code: 'sk', en: 'Slovak' },
+    { name: '匈牙利语', code: 'hu', en: 'Hungarian' },
+    { name: '罗马尼亚语', code: 'ro', en: 'Romanian' },
+    { name: '保加利亚语', code: 'bg', en: 'Bulgarian' },
+    { name: '希腊语', code: 'el', en: 'Greek' },
+    { name: '乌克兰语', code: 'uk', en: 'Ukrainian' },
+    { name: '白俄罗斯语', code: 'be', en: 'Belarusian' },
+    { name: '克罗地亚语', code: 'hr', en: 'Croatian' },
+    { name: '塞尔维亚语', code: 'sr', en: 'Serbian' },
+    { name: '斯洛文尼亚语', code: 'sl', en: 'Slovenian' },
+    { name: '立陶宛语', code: 'lt', en: 'Lithuanian' },
+    { name: '拉脱维亚语', code: 'lv', en: 'Latvian' },
+    { name: '爱沙尼亚语', code: 'et', en: 'Estonian' },
+    { name: '马其顿语', code: 'mk', en: 'Macedonian' },
+    { name: '波斯尼亚语', code: 'bs', en: 'Bosnian' },
+    { name: '阿尔巴尼亚语', code: 'sq', en: 'Albanian' },
+    { name: '冰岛语', code: 'is', en: 'Icelandic' },
+    { name: '马耳他语', code: 'mt', en: 'Maltese' },
+    { name: '卢森堡语', code: 'lb', en: 'Luxembourgish' },
+    { name: '法罗语', code: 'fo', en: 'Faroese' },
+    { name: '加泰罗尼亚语', code: 'ca', en: 'Catalan' },
+    { name: '加利西亚语', code: 'gl', en: 'Galician' },
+    { name: '巴斯克语', code: 'eu', en: 'Basque' },
+    { name: '奥克语', code: 'oc', en: 'Occitan' },
+    { name: '布列塔尼语', code: 'br', en: 'Breton' },
+    { name: '威尔士语', code: 'cy', en: 'Welsh' },
+    // ── 中东/中亚 ──
+    { name: '波斯语', code: 'fa', en: 'Persian' },
+    { name: '希伯来语', code: 'he', en: 'Hebrew' },
+    { name: '亚美尼亚语', code: 'hy', en: 'Armenian' },
+    { name: '格鲁吉亚语', code: 'ka', en: 'Georgian' },
+    { name: '阿塞拜疆语', code: 'az', en: 'Azerbaijani' },
+    { name: '哈萨克语', code: 'kk', en: 'Kazakh' },
+    { name: '乌兹别克语', code: 'uz', en: 'Uzbek' },
+    { name: '土库曼语', code: 'tk', en: 'Turkmen' },
+    { name: '塔吉克语', code: 'tg', en: 'Tajik' },
+    { name: '普什图语', code: 'ps', en: 'Pashto' },
+    { name: '信德语', code: 'sd', en: 'Sindhi' },
+    { name: '鞑靼语', code: 'tt', en: 'Tatar' },
+    { name: '巴什基尔语', code: 'ba', en: 'Bashkir' },
+    // ── 非洲 ──
+    { name: '南非荷兰语', code: 'af', en: 'Afrikaans' },
+    { name: '斯瓦希里语', code: 'sw', en: 'Swahili' },
+    { name: '约鲁巴语', code: 'yo', en: 'Yoruba' },
+    { name: '豪萨语', code: 'ha', en: 'Hausa' },
+    { name: '索马里语', code: 'so', en: 'Somali' },
+    { name: '绍纳语', code: 'sn', en: 'Shona' },
+    { name: '阿姆哈拉语', code: 'am', en: 'Amharic' },
+    { name: '林加拉语', code: 'ln', en: 'Lingala' },
+    { name: '马达加斯加语', code: 'mg', en: 'Malagasy' },
+    // ── 其他 ──
+    { name: '拉丁语', code: 'la', en: 'Latin' },
+    { name: '梵语', code: 'sa', en: 'Sanskrit' },
+    { name: '毛利语', code: 'mi', en: 'Maori' },
+    { name: '夏威夷语', code: 'haw', en: 'Hawaiian' },
+    { name: '海地克里奥尔语', code: 'ht', en: 'Haitian Creole' },
+    { name: '意第绪语', code: 'yi', en: 'Yiddish' },
+];
+
+function initSubtitleLangPicker() {
+    const btn = document.getElementById('subtitle-lang-picker-btn');
+    const dropdown = document.getElementById('subtitle-lang-dropdown');
+    const searchInput = document.getElementById('subtitle-lang-search');
+    const listEl = document.getElementById('subtitle-lang-list');
+    const hiddenInput = document.getElementById('language');
+    if (!btn || !dropdown || !listEl || !hiddenInput) return;
+
+    // Restore saved language
+    const savedLang = localStorage.getItem(SUBTITLE_LANG_STORAGE_KEY);
+    if (savedLang) {
+        const found = SUBTITLE_ALL_LANGUAGES.find(l => l.name === savedLang);
+        if (found) {
+            hiddenInput.value = found.name;
+            btn.querySelector('span').textContent = found.name;
+        }
+    }
+
+    const renderList = (filter = '') => {
+        const q = filter.toLowerCase().trim();
+        const filtered = q
+            ? SUBTITLE_ALL_LANGUAGES.filter(l =>
+                l.name.includes(q) || l.en.toLowerCase().includes(q) || l.code.includes(q))
+            : SUBTITLE_ALL_LANGUAGES;
+
+        // Pinned first, then the rest
+        const pinned = filtered.filter(l => l.pinned);
+        const rest = filtered.filter(l => !l.pinned);
+        const sorted = [...pinned, ...rest];
+
+        listEl.innerHTML = sorted.map(l => `
+            <div class="subtitle-lang-item" data-name="${l.name}"
+                 style="padding:8px 14px;cursor:pointer;font-size:13px;color:var(--text-primary, #ccc);
+                        border-bottom:1px solid rgba(255,255,255,0.04);
+                        display:flex;justify-content:space-between;align-items:center;
+                        transition:background 0.15s;
+                        ${hiddenInput.value === l.name ? 'background:rgba(0,212,255,0.12);color:#00D4FF;' : ''}
+                        ${l.pinned ? 'font-weight:600;' : ''}">
+                <span>${l.name}</span>
+                <span style="font-size:11px;color:var(--text-muted, #666);">${l.en}</span>
+            </div>
+        `).join('');
+
+        if (sorted.length === 0) {
+            listEl.innerHTML = '<div style="padding:16px;text-align:center;color:var(--text-muted, #555);font-size:12px;">未找到匹配语言</div>';
+        }
+    };
+
+    // Toggle dropdown
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const isOpen = dropdown.style.display !== 'none';
+        dropdown.style.display = isOpen ? 'none' : 'block';
+        if (!isOpen) {
+            searchInput.value = '';
+            renderList();
+            setTimeout(() => searchInput.focus(), 30);
+        }
+    });
+
+    // Search filter
+    searchInput.addEventListener('input', () => {
+        renderList(searchInput.value);
+    });
+    searchInput.addEventListener('click', (e) => e.stopPropagation());
+
+    // Click item
+    listEl.addEventListener('click', (e) => {
+        const item = e.target.closest('.subtitle-lang-item');
+        if (!item) return;
+        const name = item.dataset.name;
+        hiddenInput.value = name;
+        btn.querySelector('span').textContent = name;
+        dropdown.style.display = 'none';
+        // Persist
+        localStorage.setItem(SUBTITLE_LANG_STORAGE_KEY, name);
+    });
+
+    // Hover effect
+    listEl.addEventListener('mouseover', (e) => {
+        const item = e.target.closest('.subtitle-lang-item');
+        if (item) item.style.background = 'rgba(255,255,255,0.08)';
+    });
+    listEl.addEventListener('mouseout', (e) => {
+        const item = e.target.closest('.subtitle-lang-item');
+        if (item) item.style.background = hiddenInput.value === item.dataset.name ? 'rgba(0,212,255,0.12)' : '';
+    });
+
+    // Click outside to close
+    document.addEventListener('click', (e) => {
+        if (!document.getElementById('subtitle-lang-picker-wrap')?.contains(e.target)) {
+            dropdown.style.display = 'none';
+        }
+    });
+}
 
 // 心跳检测，保持后端活跃
 let heartbeatInterval = null;
@@ -3102,6 +3317,7 @@ async function startMediaConvert() {
             payload.reverbPreset = document.getElementById('audio-fx-reverb-preset')?.value || 'hall';
             payload.reverbMix = parseFloat(document.getElementById('audio-fx-reverb-mix')?.value || '30');
             payload.stereoWidth = parseFloat(document.getElementById('audio-fx-stereo-width')?.value || '100');
+            payload.outputFormat = document.getElementById('audio-fx-output-format')?.value || 'mp3';
         }
     } else {
         // 默认：使用第一个子标签页的 Logo 模式
@@ -3286,6 +3502,64 @@ async function saveElevenLabsKey() {
     }
 }
 
+/**
+ * 语音类别标签 — 标示免费/付费
+ * premade = ElevenLabs 官方预置语音 (免费API可用)
+ * cloned = 用户克隆语音 (需付费订阅)
+ * generated = AI 生成语音 (需付费订阅)
+ * professional = 专业克隆 (需付费订阅)
+ */
+function _voiceCategoryLabel(category) {
+    const map = {
+        premade:      '🆓 [免费]',
+        cloned:       '💰 [克隆]',
+        generated:    '💰 [生成]',
+        professional: '💰 [专业]',
+    };
+    return map[category] || '🆓 [官方]';
+}
+
+/** 当下拉选中变化时，显示完整 Voice ID 在提示区域 */
+function _setupVoiceSelectTooltip() {
+    const select = document.getElementById('voice-select');
+    if (!select) return;
+
+    // 创建或获取 tooltip
+    let tip = document.getElementById('voice-id-tip');
+    if (!tip) {
+        tip = document.createElement('div');
+        tip.id = 'voice-id-tip';
+        tip.style.cssText = 'font-size: 11px; color: var(--text-muted); margin-top: 4px; font-family: monospace; cursor: pointer; padding: 2px 8px; background: rgba(255,255,255,0.03); border-radius: 4px; display: none; transition: all 0.2s;';
+        tip.title = '点击复制 Voice ID';
+        tip.onclick = () => {
+            const vid = select.value;
+            if (vid) {
+                navigator.clipboard.writeText(vid).then(() => showToast(`已复制 Voice ID: ${vid}`, 'success'));
+            }
+        };
+        select.parentNode.insertBefore(tip, select.nextSibling);
+    }
+
+    const updateTip = () => {
+        const opt = select.options[select.selectedIndex];
+        if (opt && opt.value) {
+            const cat = opt.dataset?.category || 'premade';
+            const isFree = cat === 'premade';
+            const freeTag = isFree
+                ? '<span style="color:#00d9a5;font-size:10px;margin-left:6px;">✅ 免费API可用</span>'
+                : '<span style="color:#ff9f43;font-size:10px;margin-left:6px;">💳 需付费订阅</span>';
+            tip.innerHTML = `Voice ID: <span style="color:var(--text-primary);">${opt.value}</span>${freeTag}`;
+            tip.style.display = 'block';
+        } else {
+            tip.style.display = 'none';
+        }
+    };
+
+    select.addEventListener('change', updateTip);
+    // Also trigger on initial load
+    setTimeout(updateTip, 500);
+}
+
 async function loadVoices() {
     updateElevenLabsStatus('连接中...');
 
@@ -3301,8 +3575,13 @@ async function loadVoices() {
             data.voices.forEach(voice => {
                 const option = document.createElement('option');
                 option.value = voice.voice_id;
-                option.textContent = voice.name;
+                // 显示格式: [类别] 名称 (voice_id)
+                const shortId = voice.voice_id ? voice.voice_id.slice(0, 8) + '...' : '';
+                const catLabel = _voiceCategoryLabel(voice.category);
+                option.textContent = `${catLabel} ${voice.name.replace(/^\[[^\]]+\]\s*/, '')} (${shortId})`;
                 option.dataset.previewUrl = voice.preview_url || '';
+                option.dataset.category = voice.category || 'premade';
+                option.dataset.fullVoiceId = voice.voice_id || '';
                 select.appendChild(option);
 
                 if (voice.voice_id) {
@@ -3321,6 +3600,7 @@ async function loadVoices() {
         }
 
         syncBatchVoiceOptions();
+        _setupVoiceSelectTooltip();
 
         // 同时加载额度
         loadQuota();
@@ -3369,8 +3649,11 @@ async function searchVoices() {
                 if (!exists && voice.voice_id) {
                     const option = document.createElement('option');
                     option.value = voice.voice_id;
-                    option.textContent = `[搜索] ${voice.name}`;
+                    const shortId = voice.voice_id ? voice.voice_id.slice(0, 8) + '...' : '';
+                    option.textContent = `🔍 ${voice.name} (${shortId})`;
                     option.dataset.previewUrl = voice.preview_url || '';
+                    option.dataset.category = 'shared';
+                    option.dataset.fullVoiceId = voice.voice_id || '';
                     select.appendChild(option);
                     addedCount++;
 
@@ -3394,29 +3677,59 @@ async function searchVoices() {
 
             data.voices.forEach((voice, idx) => {
                 const item = document.createElement('div');
-                item.style.cssText = 'padding: 8px 12px; cursor: pointer; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;';
-                item.onmouseenter = () => item.style.background = 'rgba(255,255,255,0.1)';
+                item.style.cssText = 'padding: 10px 12px; cursor: pointer; border-radius: 6px; display: flex; flex-direction: column; gap: 4px; border-bottom: 1px solid rgba(255,255,255,0.05);';
+                item.onmouseenter = () => item.style.background = 'rgba(255,255,255,0.08)';
                 item.onmouseleave = () => item.style.background = '';
+
+                // 第一行: 序号+名称 + 选择按钮
+                const topRow = document.createElement('div');
+                topRow.style.cssText = 'display: flex; justify-content: space-between; align-items: center;';
 
                 const nameSpan = document.createElement('span');
                 nameSpan.textContent = `${idx + 1}. ${voice.name}`;
-                nameSpan.style.cssText = 'flex: 1; color: var(--text-primary);';
+                nameSpan.style.cssText = 'flex: 1; color: var(--text-primary); font-size: 13px; font-weight: 500;';
 
                 const selectBtn = document.createElement('button');
                 selectBtn.className = 'btn btn-primary';
-                selectBtn.style.cssText = 'padding: 4px 10px; font-size: 12px;';
+                selectBtn.style.cssText = 'padding: 4px 10px; font-size: 12px; flex-shrink: 0;';
                 selectBtn.textContent = '选择';
                 selectBtn.onclick = (e) => {
                     e.stopPropagation();
-                    // 设置下拉框选中值
                     select.value = voice.voice_id;
                     syncBatchVoiceOptions();
                     showToast(`已选择: ${voice.name}`, 'success');
                     resultsDiv.classList.add('hidden');
                 };
 
-                item.appendChild(nameSpan);
-                item.appendChild(selectBtn);
+                topRow.appendChild(nameSpan);
+                topRow.appendChild(selectBtn);
+
+                // 第二行: Voice ID (可复制) + 类型标签
+                const bottomRow = document.createElement('div');
+                bottomRow.style.cssText = 'display: flex; align-items: center; gap: 8px;';
+
+                const idSpan = document.createElement('span');
+                idSpan.textContent = `ID: ${voice.voice_id || 'N/A'}`;
+                idSpan.title = '点击复制 Voice ID';
+                idSpan.style.cssText = 'font-size: 11px; color: var(--text-muted); font-family: monospace; cursor: pointer; padding: 1px 6px; background: rgba(255,255,255,0.05); border-radius: 3px; transition: background 0.15s;';
+                idSpan.onmouseenter = () => idSpan.style.background = 'rgba(255,255,255,0.12)';
+                idSpan.onmouseleave = () => idSpan.style.background = 'rgba(255,255,255,0.05)';
+                idSpan.onclick = (e) => {
+                    e.stopPropagation();
+                    navigator.clipboard.writeText(voice.voice_id || '').then(() => {
+                        showToast(`已复制 Voice ID: ${voice.voice_id}`, 'success');
+                    });
+                };
+
+                const sharedBadge = document.createElement('span');
+                sharedBadge.textContent = '🌐 社区共享';
+                sharedBadge.style.cssText = 'font-size: 10px; padding: 1px 6px; border-radius: 3px; background: rgba(52,152,219,0.2); color: #5dade2;';
+
+                bottomRow.appendChild(idSpan);
+                bottomRow.appendChild(sharedBadge);
+
+                item.appendChild(topRow);
+                item.appendChild(bottomRow);
                 resultsDiv.appendChild(item);
             });
 
@@ -7025,6 +7338,219 @@ async function startBatchThumbnail() {
     }
 }
 
+// ========== 批量截图 - 模式切换 ==========
+function switchThumbnailMode(mode) {
+    const folderMode = document.getElementById('thumb-folder-mode');
+    const urlMode = document.getElementById('thumb-url-mode');
+    const folderBtn = document.getElementById('thumb-mode-folder-btn');
+    const urlBtn = document.getElementById('thumb-mode-url-btn');
+
+    if (mode === 'url') {
+        folderMode.style.display = 'none';
+        urlMode.style.display = 'block';
+        folderBtn.classList.remove('active');
+        urlBtn.classList.add('active');
+    } else {
+        folderMode.style.display = 'block';
+        urlMode.style.display = 'none';
+        urlBtn.classList.remove('active');
+        folderBtn.classList.add('active');
+    }
+}
+
+// 链接数量计数
+document.addEventListener('DOMContentLoaded', () => {
+    const ta = document.getElementById('url-thumb-links');
+    if (ta) {
+        ta.addEventListener('input', () => {
+            const lines = ta.value.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+            const countEl = document.getElementById('url-thumb-count');
+            if (countEl) countEl.textContent = lines.length > 0 ? `${lines.length} 条链接` : '';
+        });
+    }
+});
+
+// 选择链接截图输出目录
+async function selectUrlThumbnailOutputDir() {
+    try {
+        const result = await apiFetch(`${API_BASE}/file/select-folder`, { method: 'POST' });
+        const data = await result.json();
+        if (data?.path) document.getElementById('url-thumb-output-path').value = data.path;
+    } catch {
+        const path = await window.electronAPI?.selectFolder?.();
+        if (path) document.getElementById('url-thumb-output-path').value = path;
+    }
+}
+
+// 打开链接截图输出目录
+async function openUrlThumbnailOutputDir() {
+    const outPath = document.getElementById('url-thumb-output-path').value.trim()
+        || (window.electronAPI?.joinPath?.(window.electronAPI?.getHomeDir?.(), 'Downloads', 'url_thumbnails'));
+    if (outPath) {
+        await apiFetch(`${API_BASE}/file/open-folder`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: outPath })
+        }).catch(() => {});
+    }
+}
+
+// 注册 IPC 进度事件（在 Electron 环境下）
+let _urlThumbProgressRegistered = false;
+function registerUrlThumbnailProgress() {
+    if (_urlThumbProgressRegistered) return;
+    if (window.electronAPI?.onUrlThumbnailProgress) {
+        window.electronAPI.onUrlThumbnailProgress((event, data) => {
+            updateUrlThumbnailItem(data);
+        });
+        _urlThumbProgressRegistered = true;
+    }
+}
+
+let _urlThumbOutputDir = '';
+
+// 开始链接截图
+async function startUrlThumbnail() {
+    const ta = document.getElementById('url-thumb-links');
+    const urls = (ta.value || '').split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    if (urls.length === 0) {
+        showToast('请输入至少一条视频链接', 'error');
+        return;
+    }
+
+    const outputDir = document.getElementById('url-thumb-output-path').value.trim();
+    const mode = document.getElementById('url-thumb-mode').value;
+    const format = document.getElementById('url-thumb-format').value;
+
+    const startBtn = document.getElementById('url-thumb-start-btn');
+    const statusEl = document.getElementById('url-thumb-status');
+    const progressList = document.getElementById('url-thumb-progress-list');
+    const itemsContainer = document.getElementById('url-thumb-items');
+    const resultSection = document.getElementById('url-thumb-result-section');
+
+    // 重置 UI
+    startBtn.disabled = true;
+    statusEl.textContent = '处理中...';
+    resultSection.classList.add('hidden');
+    progressList.style.display = 'block';
+    itemsContainer.innerHTML = '';
+
+    // 初始化进度条目
+    urls.forEach((url, i) => {
+        const shortUrl = url.length > 60 ? url.substring(0, 57) + '...' : url;
+        itemsContainer.innerHTML += `
+            <div id="url-thumb-item-${i}" style="display:flex; align-items:center; gap:10px; padding:8px 12px;
+                background:var(--bg-tertiary); border-radius:8px; font-size:13px;">
+                <span id="url-thumb-icon-${i}" style="font-size:16px;">⏳</span>
+                <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--text-secondary);"
+                    title="${escapeHtml(url)}">${escapeHtml(shortUrl)}</span>
+                <span id="url-thumb-state-${i}" style="font-size:12px; color:var(--text-muted); white-space:nowrap;">等待中</span>
+            </div>`;
+    });
+
+    // 注册进度监听
+    registerUrlThumbnailProgress();
+
+    try {
+        const response = await apiFetch(`${API_BASE}/media/url-thumbnail`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ urls, output_dir: outputDir, mode, format })
+        });
+        const result = await response.json();
+        _urlThumbOutputDir = result.output_dir || '';
+
+        if (response.ok) {
+            statusEl.textContent = `✅ ${result.message}`;
+            showToast(result.message, 'success', 6000);
+            displayUrlThumbnailResults(result);
+        } else {
+            statusEl.textContent = '❌ 失败';
+            showToast('错误: ' + (result.error || '未知错误'), 'error');
+        }
+    } catch (e) {
+        statusEl.textContent = '❌ 请求失败';
+        showToast('请求失败: ' + e.message, 'error');
+    } finally {
+        startBtn.disabled = false;
+    }
+}
+
+// 更新单条链接的进度状态
+function updateUrlThumbnailItem(data) {
+    const { index, status, url } = data;
+    const iconEl = document.getElementById(`url-thumb-icon-${index}`);
+    const stateEl = document.getElementById(`url-thumb-state-${index}`);
+    if (!iconEl || !stateEl) return;
+
+    const statusMap = {
+        downloading:   { icon: '⬇️', text: '下载中...', color: '#74c0fc' },
+        screenshotting:{ icon: '📸', text: '截图中...', color: '#ffa94d' },
+        done:          { icon: '✅', text: '完成',      color: '#51cf66' },
+        error:         { icon: '❌', text: '失败',      color: '#ff6b6b' },
+    };
+    const s = statusMap[status] || { icon: '⏳', text: status, color: 'var(--text-muted)' };
+    iconEl.textContent = s.icon;
+    stateEl.textContent = s.text;
+    stateEl.style.color = s.color;
+}
+
+// 展示最终结果
+function displayUrlThumbnailResults(result) {
+    const resultSection = document.getElementById('url-thumb-result-section');
+    const summaryEl = document.getElementById('url-thumb-result-summary');
+    const gridEl = document.getElementById('url-thumb-result-grid');
+
+    resultSection.classList.remove('hidden');
+
+    const total = result.results.length;
+    const success = result.success || result.results.filter(r => r.success).length;
+    const failed = total - success;
+    const escapedDir = escapeHtml(result.output_dir || '');
+
+    summaryEl.innerHTML = `
+        <div style="display:flex; gap:24px; flex-wrap:wrap; align-items:center;">
+            <div style="display:flex; flex-direction:column; align-items:center;">
+                <span style="font-size:22px; font-weight:700; color:var(--accent);">${total}</span>
+                <span style="font-size:11px; color:var(--text-muted);">总计</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center;">
+                <span style="font-size:22px; font-weight:700; color:#51cf66;">${success}</span>
+                <span style="font-size:11px; color:var(--text-muted);">成功</span>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:center;">
+                <span style="font-size:22px; font-weight:700; color:#ff6b6b;">${failed}</span>
+                <span style="font-size:11px; color:var(--text-muted);">失败</span>
+            </div>
+            <div style="flex:1; font-size:12px; color:var(--text-muted); word-break:break-all;">📁 ${escapedDir}</div>
+        </div>`;
+
+    // 图片网格（成功项目）
+    gridEl.innerHTML = '';
+    for (const r of result.results) {
+        if (!r.success) {
+            gridEl.innerHTML += `
+                <div style="border-radius:8px; overflow:hidden; background:var(--bg-tertiary); padding:8px;
+                    border:1px solid var(--border-color); display:flex; flex-direction:column; gap:4px;">
+                    <div style="font-size:20px; text-align:center;">❌</div>
+                    <div style="font-size:10px; color:#ff6b6b; word-break:break-all; line-height:1.3;">${escapeHtml(r.error || '失败')}</div>
+                </div>`;
+        } else {
+            // 在 Electron 中使用 file:// 协议显示图片
+            const imgSrc = window.electronAPI ? `local-file://${r.output}` : '';
+            const fileName = r.output.split('/').pop();
+            gridEl.innerHTML += `
+                <div style="border-radius:8px; overflow:hidden; background:var(--bg-tertiary);
+                    border:1px solid var(--border-color); cursor:pointer;"
+                    onclick="window.electronAPI?.showItemInFolder?.('${r.output.replace(/'/g, "\\'")}')">
+                    ${imgSrc ? `<img src="${imgSrc}" style="width:100%; aspect-ratio:16/9; object-fit:cover; display:block;" onerror="this.style.display='none'">` : ''}
+                    <div style="padding:6px 8px; font-size:11px; color:var(--text-secondary); overflow:hidden;
+                        text-overflow:ellipsis; white-space:nowrap; title="${escapeHtml(fileName)}">${escapeHtml(fileName)}</div>
+                </div>`;
+        }
+    }
+}
+
 function displayThumbnailResults(result) {
     const resultSection = document.getElementById('thumbnail-result-section');
     const summaryEl = document.getElementById('thumbnail-result-summary');
@@ -7488,10 +8014,11 @@ if (origSubTabHandler) {
 // ==================== 批量剪辑模块 ====================
 
 let batchCutFilePath = '';
-let batchCutSegments = [];  // [{name, start, end, checked}]
+let batchCutSegments = [];  // [{name, start, end, checked, videoPath?, videoDuration?}]
 let batchCutOutputDir = '';
-let batchCutPreviewIndex = -1;  // 当前预览的片段索引
-let batchCutPreviewSrc = '';    // 当前预览视频的src
+let batchCutPreviewIndex = -1;
+let batchCutPreviewSrc = '';
+let batchCutMultiMode = false;
 
 // 初始化批量剪辑文件输入
 document.addEventListener('DOMContentLoaded', () => {
@@ -7507,7 +8034,7 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 拖拽支持
+    // 拖拽支持（单视频）
     const dropZone = document.getElementById('batchcut-drop-zone');
     if (dropZone) {
         dropZone.addEventListener('dragover', (e) => {
@@ -7532,6 +8059,40 @@ document.addEventListener('DOMContentLoaded', () => {
                 document.getElementById('batchcut-video-path').value = file.name;
                 loadBatchCutVideoInfo(batchCutFilePath);
             }
+        });
+    }
+
+    // === 多视频模式文件输入 ===
+    const multiInput = document.getElementById('batchcut-multi-input');
+    if (multiInput) {
+        multiInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                batchCutMultiAddFiles(Array.from(e.target.files));
+                e.target.value = ''; // 重置，允许重复选择
+            }
+        });
+    }
+    // 拖拽支持（多视频）
+    const multiDrop = document.getElementById('batchcut-multi-drop-zone');
+    if (multiDrop) {
+        multiDrop.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            multiDrop.style.borderColor = 'var(--accent)';
+            multiDrop.style.background = 'rgba(102,126,234,0.05)';
+        });
+        multiDrop.addEventListener('dragleave', () => {
+            multiDrop.style.borderColor = 'var(--border-color)';
+            multiDrop.style.background = '';
+        });
+        multiDrop.addEventListener('drop', (e) => {
+            e.preventDefault();
+            multiDrop.style.borderColor = 'var(--border-color)';
+            multiDrop.style.background = '';
+            const videoExts = ['.mp4', '.mov', '.mkv', '.avi', '.wmv', '.flv', '.webm', '.m4v'];
+            const files = Array.from(e.dataTransfer.files).filter(f =>
+                videoExts.some(ext => f.name.toLowerCase().endsWith(ext))
+            );
+            if (files.length > 0) batchCutMultiAddFiles(files);
         });
     }
 });
@@ -7596,6 +8157,261 @@ function formatPreviewTimecode(seconds) {
     const s = Math.floor(seconds % 60);
     const f = Math.floor((seconds % 1) * fps);
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}:${String(f).padStart(2, '0')}`;
+}
+
+// ===== 多视频模式函数 =====
+
+// 切换多视频模式
+function toggleBatchCutMultiMode() {
+    batchCutMultiMode = document.getElementById('batchcut-multi-mode')?.checked || false;
+
+    // 切换 UI 区域可见性
+    const show = el => { if (el) el.style.display = ''; };
+    const hide = el => { if (el) el.style.display = 'none'; };
+
+    const singleSection = document.getElementById('batchcut-single-section');
+    const multiSection = document.getElementById('batchcut-multi-section');
+    const previewSection = document.getElementById('batchcut-preview-section');
+    const singleToolbar = document.getElementById('batchcut-single-toolbar');
+    const multiToolbar = document.getElementById('batchcut-multi-toolbar');
+    const timeHints = document.getElementById('batchcut-time-hints');
+    const cutOptions = document.getElementById('batchcut-cut-options');
+    const startBtn = document.getElementById('batchcut-start-btn');
+
+    if (batchCutMultiMode) {
+        hide(singleSection);
+        show(multiSection);
+        hide(previewSection);
+        hide(singleToolbar);
+        show(multiToolbar);
+        hide(timeHints);
+        hide(cutOptions);
+        hide(startBtn);
+    } else {
+        show(singleSection);
+        hide(multiSection);
+        show(singleToolbar);
+        hide(multiToolbar);
+        show(timeHints);
+        show(cutOptions);
+        show(startBtn);
+    }
+
+    // 清空片段并重新渲染
+    batchCutSegments = [];
+    batchCutPreviewIndex = -1;
+    renderBatchCutTableHeader();
+    renderBatchCutSegments();
+}
+
+// 多视频模式：添加文件
+async function batchCutMultiAddFiles(files) {
+    const videoExts = ['.mp4', '.mov', '.mkv', '.avi', '.wmv', '.flv', '.webm', '.m4v'];
+    const validFiles = files.filter(f =>
+        videoExts.some(ext => f.name.toLowerCase().endsWith(ext))
+    );
+    if (validFiles.length === 0) {
+        showToast('没有找到有效的视频文件', 'error');
+        return;
+    }
+
+    // 按文件名自然排序
+    validFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+
+    showToast(`正在加载 ${validFiles.length} 个视频...`, 'info');
+
+    for (const file of validFiles) {
+        const filePath = getFileNativePath(file);
+        const name = file.name.replace(/\.[^.]+$/, ''); // 去掉扩展名
+
+        // 检查是否已添加
+        if (batchCutSegments.some(s => s.videoPath === filePath)) continue;
+
+        // 获取时长
+        let duration = 0;
+        try {
+            const resp = await apiFetch(`${API_BASE}/media/info`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ file_path: filePath })
+            });
+            const info = await resp.json();
+            if (info.duration) duration = info.duration;
+        } catch (e) {
+            console.warn('获取视频时长失败:', filePath, e.message);
+        }
+
+        const subtitles = [''];
+        while (subtitles.length < batchCutSubtitleCols.length) subtitles.push('');
+
+        batchCutSegments.push({
+            name,
+            start: '',
+            end: '',
+            subtitles,
+            checked: true,
+            videoPath: filePath,
+            videoDuration: duration
+        });
+    }
+
+    renderBatchCutTableHeader();
+    renderBatchCutSegments();
+    showToast(`已添加 ${validFiles.length} 个视频`, 'success');
+
+    // 异步生成缩略图
+    batchCutGenerateThumbnails();
+}
+
+// 多视频模式：选择文件夹
+async function batchCutMultiSelectFolder() {
+    try {
+        // Electron 的 dialog API
+        if (window.electronAPI?.selectFolder) {
+            const folderPath = await window.electronAPI.selectFolder();
+            if (!folderPath) return;
+            // 请求后端扫描文件夹中的视频文件
+            showToast('请通过「选择多个视频」按钮选取文件', 'info');
+        } else {
+            // 回退：使用 file input
+            document.getElementById('batchcut-multi-input')?.click();
+        }
+    } catch (e) {
+        showToast('选择文件夹失败: ' + e.message, 'error');
+    }
+}
+
+// 多视频模式：粘贴文案（复用粘贴弹窗）
+function batchCutMultiPasteText() {
+    if (batchCutSegments.length === 0) {
+        showToast('请先添加视频文件', 'error');
+        return;
+    }
+    openBatchCutPasteModal('multi');
+}
+
+// 视频缩略图生成
+function batchCutGenThumb(videoPath) {
+    return new Promise((resolve) => {
+        const video = document.createElement('video');
+        video.crossOrigin = 'anonymous';
+        video.muted = true;
+        video.preload = 'metadata';
+        const src = window.electronAPI?.toFileUrl?.(videoPath) || normalizeFilePath(videoPath);
+        video.src = src;
+
+        const timeout = setTimeout(() => { resolve(''); }, 5000);
+
+        video.addEventListener('loadeddata', () => {
+            video.currentTime = Math.min(1, video.duration * 0.1 || 0.5);
+        }, { once: true });
+
+        video.addEventListener('seeked', () => {
+            clearTimeout(timeout);
+            try {
+                const canvas = document.createElement('canvas');
+                const w = 80, h = Math.round(80 * video.videoHeight / video.videoWidth) || 60;
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0, w, h);
+                resolve(canvas.toDataURL('image/jpeg', 0.6));
+            } catch (e) {
+                resolve('');
+            }
+            video.src = '';
+        }, { once: true });
+
+        video.addEventListener('error', () => { clearTimeout(timeout); resolve(''); }, { once: true });
+    });
+}
+
+async function batchCutGenerateThumbnails() {
+    for (const seg of batchCutSegments) {
+        if (seg.videoPath && !seg.thumbnail) {
+            seg.thumbnail = await batchCutGenThumb(seg.videoPath);
+            renderBatchCutSegments(); // 渐进式更新
+        }
+    }
+}
+
+// ===== 视频名称自动匹配 =====
+
+// 归一化文件名（去扩展名、特殊字符、转小写）
+function normalizeVideoName(str) {
+    return (str || '')
+        .replace(/\.[^.]+$/, '')       // 去扩展名
+        .replace(/[_\-\.\s]+/g, ' ')   // 特殊字符转空格
+        .trim()
+        .toLowerCase();
+}
+
+// 计算两个字符串的相似度（Dice coefficient on bigrams）
+function stringSimilarity(a, b) {
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+
+    // 子串包含检查
+    if (a.includes(b) || b.includes(a)) return 0.9;
+
+    const bigrams = (s) => {
+        const set = new Set();
+        for (let i = 0; i < s.length - 1; i++) set.add(s.slice(i, i + 2));
+        return set;
+    };
+    const setA = bigrams(a), setB = bigrams(b);
+    if (setA.size === 0 || setB.size === 0) return 0;
+    let inter = 0;
+    for (const g of setA) if (setB.has(g)) inter++;
+    return (2 * inter) / (setA.size + setB.size);
+}
+
+// 检测哪一列是视频名称列
+function batchCutDetectVideoNameCol(rows, maxCols) {
+    if (batchCutSegments.length === 0 || maxCols === 0) {
+        return { col: -1, matchMap: {} };
+    }
+
+    // 获取所有视频文件名（归一化）
+    const videoNames = batchCutSegments.map(s =>
+        normalizeVideoName((s.videoPath || '').split('/').pop().split('\\').pop())
+    );
+
+    let bestCol = -1, bestMatchCount = 0, bestMatchMap = {};
+
+    for (let ci = 0; ci < maxCols; ci++) {
+        const matchMap = {};
+        const usedVideos = new Set();
+        let matchCount = 0;
+
+        for (let ri = 0; ri < rows.length; ri++) {
+            const cellNorm = normalizeVideoName(rows[ri]?.[ci] || '');
+            if (!cellNorm) continue;
+
+            // 找最佳匹配的视频
+            let bestSim = 0, bestVi = -1;
+            for (let vi = 0; vi < videoNames.length; vi++) {
+                if (usedVideos.has(vi)) continue;
+                const sim = stringSimilarity(cellNorm, videoNames[vi]);
+                if (sim > bestSim) { bestSim = sim; bestVi = vi; }
+            }
+
+            if (bestSim >= 0.4 && bestVi >= 0) {
+                matchMap[ri] = bestVi;
+                usedVideos.add(bestVi);
+                matchCount++;
+            }
+        }
+
+        // 需要至少 30% 的行匹配上
+        if (matchCount > bestMatchCount && matchCount >= rows.length * 0.3) {
+            bestCol = ci;
+            bestMatchCount = matchCount;
+            bestMatchMap = matchMap;
+        }
+    }
+
+    return { col: bestCol, matchMap: bestMatchMap };
 }
 
 // 预览某个片段的入出点
@@ -7865,8 +8681,12 @@ function removeBatchCutSubtitleColumn(colIdx) {
 
 // 获取 grid-template-columns
 function batchCutGridCols() {
-    // 40(#) + 30(✓) + N*1fr(字幕列) + 120(入点) + 120(出点) + 40(预览) + 50(操作)
     const subCols = batchCutSubtitleCols.map(() => '1fr').join(' ');
+    if (batchCutMultiMode) {
+        // 多视频模式：# + ✓ + 视频缩略图+文件名 + 字幕列 + 操作（含上下移动）
+        return `40px 30px minmax(120px, 180px) ${subCols} 90px`;
+    }
+    // 单视频模式：# + ✓ + 字幕列 + 入点 + 出点 + 预览 + 操作
     return `40px 30px ${subCols} 120px 120px 40px 50px`;
 }
 
@@ -7880,13 +8700,19 @@ function renderBatchCutTableHeader() {
             : '';
         return `<span contenteditable="true" style="outline:none; cursor:text;" onblur="batchCutSubtitleCols[${ci}].label=this.textContent.trim()||'字幕';renderFcpxmlStylePanel();">${escapeHtml(col.label)}${removeBtn}</span>`;
     }).join('');
+
+    const videoCol = batchCutMultiMode ? '<span>🎬 视频文件</span>' : '';
+    const timeHeaders = batchCutMultiMode ? '' : `
+        <span>入点</span>
+        <span>出点</span>
+        <span style="text-align: center;">👁️</span>`;
+
     el.innerHTML = `<div style="display: grid; grid-template-columns: ${batchCutGridCols()}; gap: 6px; padding: 6px 8px; background: var(--bg-tertiary); border-radius: 6px 6px 0 0; font-size: 11px; color: var(--text-muted); font-weight: 600;">
         <span style="text-align: center;">#</span>
         <span style="text-align: center;">✓</span>
+        ${videoCol}
         ${subHeaders}
-        <span>入点</span>
-        <span>出点</span>
-        <span style="text-align: center;">👁️</span>
+        ${timeHeaders}
         <span style="text-align: center;">操作</span>
     </div>`;
 }
@@ -7971,14 +8797,21 @@ function renderBatchCutSegments() {
                 onchange="batchCutUpdateSubtitle(${i}, ${ci}, this.value)">${escapeHtml(seg.subtitles[ci] || '')}</textarea>
         `).join('');
 
-        return `
-        <div class="batchcut-row" data-index="${i}" style="display: grid; grid-template-columns: ${batchCutGridCols()}; gap: 6px; padding: 4px 8px; align-items: center; border-bottom: 1px solid var(--border-color); ${!seg.checked ? 'opacity: 0.5;' : ''} ${batchCutPreviewIndex === i ? 'background: rgba(102,126,234,0.1); border-left: 3px solid var(--accent);' : ''}">
-            <span style="text-align: center; font-size: 11px; color: var(--text-muted);">${i + 1}</span>
-            <span style="text-align: center;">
-                <input type="checkbox" ${seg.checked ? 'checked' : ''}
-                    onchange="batchCutToggleRow(${i}, this.checked)">
-            </span>
-            ${subInputs}
+        // 多视频模式：显示缩略图 + 视频文件名 + 时长
+        const thumbImg = seg.thumbnail
+            ? `<img src="${seg.thumbnail}" style="width: 48px; height: 36px; object-fit: cover; border-radius: 3px; flex-shrink: 0;">`
+            : `<span style="width: 48px; height: 36px; background: var(--bg-tertiary); border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0;">🎬</span>`;
+        const videoCol = batchCutMultiMode ? `
+            <span style="display: flex; align-items: center; gap: 6px; overflow: hidden;" title="${escapeHtml(seg.videoPath || '')}">
+                ${thumbImg}
+                <span style="font-size: 10px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; flex: 1;">
+                    ${escapeHtml((seg.videoPath || '').split('/').pop().split('\\').pop().replace(/\.[^.]+$/, ''))}
+                    ${seg.videoDuration ? `<br><span style="direction: ltr; color: var(--text-muted);">${formatBatchCutTime(seg.videoDuration)}</span>` : ''}
+                </span>
+            </span>` : '';
+
+        // 单视频模式：时间点 + 预览
+        const timeCols = batchCutMultiMode ? '' : `
             <input type="text" class="input" style="font-size: 12px; padding: 3px 6px; font-family: monospace;"
                 placeholder="00:00.000" value="${escapeHtml(seg.start)}"
                 onchange="batchCutUpdateRow(${i}, 'start', this.value)">
@@ -7986,11 +8819,88 @@ function renderBatchCutSegments() {
                 placeholder="留空=结尾" value="${escapeHtml(seg.end)}"
                 onchange="batchCutUpdateRow(${i}, 'end', this.value)">
             <button class="btn btn-secondary" onclick="batchCutPreviewSegment(${i})"
-                style="padding: 2px 6px; font-size: 11px; ${batchCutPreviewIndex === i ? 'color: var(--accent); font-weight: bold;' : ''}" title="预览此片段的入出点画面">👁️</button>
-            <button class="btn btn-secondary" onclick="batchCutRemoveRow(${i})"
-                style="padding: 2px 6px; font-size: 11px; color: #f87171;" title="删除此行">🗑️</button>
+                style="padding: 2px 6px; font-size: 11px; ${batchCutPreviewIndex === i ? 'color: var(--accent); font-weight: bold;' : ''}" title="预览此片段">👁️</button>`;
+
+        return `
+        <div class="batchcut-row" data-index="${i}" ${batchCutMultiMode ? `draggable="true" ondragstart="batchCutDragStart(event, ${i})" ondragover="batchCutDragOver(event)" ondragenter="batchCutDragEnter(event)" ondragleave="batchCutDragLeave(event)" ondrop="batchCutDrop(event, ${i})" ondragend="batchCutDragEnd(event)"` : ''} style="display: grid; grid-template-columns: ${batchCutGridCols()}; gap: 6px; padding: 4px 8px; align-items: center; border-bottom: 1px solid var(--border-color); ${!seg.checked ? 'opacity: 0.5;' : ''} ${batchCutPreviewIndex === i ? 'background: rgba(102,126,234,0.1); border-left: 3px solid var(--accent);' : ''} ${batchCutMultiMode ? 'cursor: grab;' : ''} transition: background 0.15s, border-top 0.15s;">
+            <span style="text-align: center; font-size: 11px; color: var(--text-muted); ${batchCutMultiMode ? 'cursor: grab;' : ''}" ${batchCutMultiMode ? 'title="拖拽排序"' : ''}>${batchCutMultiMode ? `<span style="font-size:13px; opacity:0.5;">☰</span><br>${i + 1}` : (i + 1)}</span>
+            <span style="text-align: center;">
+                <input type="checkbox" ${seg.checked ? 'checked' : ''}
+                    onchange="batchCutToggleRow(${i}, this.checked)">
+            </span>
+            ${videoCol}
+            ${subInputs}
+            ${timeCols}
+            <span style="display: flex; gap: 2px; align-items: center; justify-content: center;">
+                ${batchCutMultiMode ? `<button class="btn btn-secondary" onclick="batchCutMoveRow(${i}, -1)" style="padding: 1px 4px; font-size: 10px; min-width: 22px;" title="上移" ${i === 0 ? 'disabled' : ''}>⬆</button><button class="btn btn-secondary" onclick="batchCutMoveRow(${i}, 1)" style="padding: 1px 4px; font-size: 10px; min-width: 22px;" title="下移" ${i === batchCutSegments.length - 1 ? 'disabled' : ''}>⬇</button>` : ''}
+                <button class="btn btn-secondary" onclick="batchCutRemoveRow(${i})" style="padding: 1px 4px; font-size: 10px; color: #f87171; min-width: 22px;" title="删除此行">🗑</button>
+            </span>
         </div>`;
     }).join('');
+}
+
+// ===== 拖拽排序 =====
+let batchCutDragIdx = -1;
+
+function batchCutDragStart(e, idx) {
+    batchCutDragIdx = idx;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', idx);
+    // 拖拽时半透明
+    setTimeout(() => { e.target.style.opacity = '0.4'; }, 0);
+}
+
+function batchCutDragOver(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+}
+
+function batchCutDragEnter(e) {
+    e.preventDefault();
+    const row = e.target.closest('.batchcut-row');
+    if (row) row.style.borderTop = '3px solid var(--accent)';
+}
+
+function batchCutDragLeave(e) {
+    const row = e.target.closest('.batchcut-row');
+    if (row) row.style.borderTop = '';
+}
+
+function batchCutDrop(e, targetIdx) {
+    e.preventDefault();
+    const row = e.target.closest('.batchcut-row');
+    if (row) row.style.borderTop = '';
+
+    if (batchCutDragIdx < 0 || batchCutDragIdx === targetIdx) return;
+
+    // 多视频模式：只移动视频信息，字幕保持不动
+    const videoFields = ['videoPath', 'videoDuration', 'thumbnail'];
+    // 取出拖动源的视频信息
+    const movedVideo = {};
+    for (const f of videoFields) movedVideo[f] = batchCutSegments[batchCutDragIdx][f];
+
+    // 移位：将中间行的视频信息依次补位
+    if (batchCutDragIdx < targetIdx) {
+        for (let i = batchCutDragIdx; i < targetIdx; i++) {
+            for (const f of videoFields) batchCutSegments[i][f] = batchCutSegments[i + 1][f];
+        }
+    } else {
+        for (let i = batchCutDragIdx; i > targetIdx; i--) {
+            for (const f of videoFields) batchCutSegments[i][f] = batchCutSegments[i - 1][f];
+        }
+    }
+    // 放置到目标位置
+    for (const f of videoFields) batchCutSegments[targetIdx][f] = movedVideo[f];
+
+    batchCutDragIdx = -1;
+    renderBatchCutSegments();
+}
+
+function batchCutDragEnd(e) {
+    e.target.style.opacity = '';
+    batchCutDragIdx = -1;
+    // 清除所有行的边框
+    document.querySelectorAll('.batchcut-row').forEach(r => r.style.borderTop = '');
 }
 
 // 更新字幕单元格
@@ -8031,10 +8941,39 @@ function batchCutRemoveRow(index) {
     renderBatchCutSegments();
 }
 
+// 上移/下移行
+function batchCutMoveRow(index, direction) {
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= batchCutSegments.length) return;
+
+    if (batchCutMultiMode) {
+        // 多视频模式：只交换视频信息，字幕保持不动
+        const videoFields = ['videoPath', 'videoDuration', 'thumbnail'];
+        for (const f of videoFields) {
+            const tmp = batchCutSegments[index][f];
+            batchCutSegments[index][f] = batchCutSegments[newIndex][f];
+            batchCutSegments[newIndex][f] = tmp;
+        }
+    } else {
+        // 单视频模式：整行交换
+        const temp = batchCutSegments[index];
+        batchCutSegments[index] = batchCutSegments[newIndex];
+        batchCutSegments[newIndex] = temp;
+    }
+    renderBatchCutSegments();
+}
+
 // 清空所有
 function batchCutClearAll() {
     batchCutSegments = [];
+    // 重置字幕列为默认 2 列
+    batchCutSubtitleCols = [
+        { label: '标题字幕', fontSize: 32, color: '#ffe500', position: 'center', bold: true, font: 'Playfair Display', fontFace: 'SemiBold', tracking: 0 },
+        { label: '内容字幕', fontSize: 32, color: '#ffe500', position: 'center', bold: true, font: 'Playfair Display', fontFace: 'SemiBold', tracking: 0 },
+    ];
+    renderBatchCutTableHeader();
     renderBatchCutSegments();
+    renderFcpxmlStylePanel();
 }
 
 // ---- 粘贴弹窗管理 ----
@@ -8068,7 +9007,7 @@ function closeBatchCutPasteModal() {
 
 function switchPasteMode(mode) {
     batchCutPasteMode = mode;
-    const modes = ['inout', 'youtube', 'table'];
+    const modes = ['inout', 'youtube', 'table', 'multi'];
     for (const m of modes) {
         const btn = document.getElementById(`paste-mode-${m}`);
         const help = document.getElementById(`paste-help-${m}`);
@@ -8077,6 +9016,16 @@ function switchPasteMode(mode) {
             btn.style.color = m === mode ? 'var(--accent)' : 'var(--text-muted)';
         }
         if (help) help.style.display = m === mode ? '' : 'none';
+    }
+    // 多视频模式：隐藏模式切换标签栏，改标题
+    const tabs = document.getElementById('paste-mode-tabs');
+    const title = document.getElementById('batchcut-paste-title');
+    if (mode === 'multi') {
+        if (tabs) tabs.style.display = 'none';
+        if (title) title.textContent = '📋 粘贴文案（多视频模式）';
+    } else {
+        if (tabs) tabs.style.display = 'flex';
+        if (title) title.textContent = '📋 粘贴剪辑片段';
     }
     // 有内容时自动更新预览
     const text = document.getElementById('batchcut-paste-textarea').value;
@@ -8354,8 +9303,80 @@ function previewBatchCutPaste() {
     }
 
     const segments = batchCutPasteMode === 'youtube' ? parseYouTubeText(text)
-        : batchCutPasteMode === 'table' ? null
+        : (batchCutPasteMode === 'table' || batchCutPasteMode === 'multi') ? null
             : parseInOutText(text);
+
+    // 多视频文案模式
+    if (batchCutPasteMode === 'multi') {
+        const rows = parseTsvWithQuotes(text);
+        if (rows.length === 0) {
+            previewEl.style.display = 'block';
+            previewEl.innerHTML = '<div style="color: #f87171; padding: 8px;">❌ 未解析到任何内容</div>';
+            statusEl.textContent = '解析失败';
+            statusEl.style.color = '#f87171';
+            return;
+        }
+        const maxCols = Math.max(...rows.map(r => r.length));
+        const isSingleCol = maxCols <= 1;
+
+        // === 自动检测视频名称列 ===
+        const matchResult = batchCutDetectVideoNameCol(rows, maxCols);
+        const videoNameCol = matchResult.col; // -1 = 未检测到
+        const matchMap = matchResult.matchMap; // row index -> segment index
+
+        // 构建列头
+        const colHeaders = [];
+        for (let ci = 0; ci < maxCols; ci++) {
+            if (ci === videoNameCol) {
+                colHeaders.push({ label: '🔗 视频名称', isMatch: true, ci });
+            } else {
+                colHeaders.push({ label: isSingleCol ? '字幕' : `字幕${colHeaders.filter(h => !h.isMatch).length + 1}`, isMatch: false, ci });
+            }
+        }
+
+        const gridCols = `30px ${colHeaders.map(h => h.isMatch ? '150px' : '1fr').join(' ')} ${videoNameCol >= 0 ? '80px' : ''}`;
+
+        const matchedCount = Object.keys(matchMap).length;
+        const matchInfo = videoNameCol >= 0
+            ? `<div style="margin: 6px 0; padding: 6px 10px; border-radius: 6px; font-size: 11px; ${matchedCount === rows.length ? 'background: #10b98115; color: #10b981;' : 'background: #f59e0b15; color: #f59e0b;'}">
+                🔗 检测到视频名称列（第 ${videoNameCol + 1} 列），已匹配 ${matchedCount}/${rows.length} 个视频
+                ${matchedCount < rows.length ? '<br>⚠️ 未匹配的行将按顺序填充' : ' ✅ 全部匹配！'}
+               </div>`
+            : (batchCutSegments.length > 0 ? '<div style="margin: 6px 0; font-size: 11px; color: var(--text-muted);">💡 如果表格中有一列是视频文件名，系统会自动匹配</div>' : '');
+
+        previewEl.style.display = 'block';
+        previewEl.innerHTML = `
+            <div style="font-weight: 600; color: var(--text-secondary); margin-bottom: 4px;">
+                ✅ 解析出 ${rows.length} 行文案
+                ${batchCutSegments.length ? `（视频共 ${batchCutSegments.length} 个）` : ''}
+            </div>
+            ${matchInfo}
+            <div style="display: grid; grid-template-columns: ${gridCols}; gap: 4px 8px; font-size: 11px; max-height: 200px; overflow-y: auto;">
+                <span style="color: var(--text-muted); font-weight: 600;">#</span>
+                ${colHeaders.map(h => `<span style="color: ${h.isMatch ? '#f59e0b' : 'var(--text-muted)'}; font-weight: 600;">${escapeHtml(h.label)}</span>`).join('')}
+                ${videoNameCol >= 0 ? '<span style="color: var(--text-muted); font-weight: 600;">匹配</span>' : ''}
+                ${rows.slice(0, 50).map((row, i) => {
+                    const matched = matchMap[i] !== undefined;
+                    const matchedSeg = matched ? batchCutSegments[matchMap[i]] : null;
+                    const matchLabel = videoNameCol >= 0
+                        ? (matched ? `<span style="color: #10b981;">✅ ${(matchedSeg.videoPath || '').split('/').pop().split('\\').pop().slice(-15)}</span>` : '<span style="color: #f87171;">❌</span>')
+                        : '';
+                    return `
+                        <span style="color: var(--text-muted);">${i + 1}</span>
+                        ${colHeaders.map(h => {
+                            const val = row[h.ci] || '—';
+                            const style = h.isMatch ? 'color: #f59e0b; font-weight: 500;' : 'color: var(--text-secondary);';
+                            return `<span style="${style} font-size: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(val)}</span>`;
+                        }).join('')}
+                        ${videoNameCol >= 0 ? `<span style="font-size: 10px;">${matchLabel}</span>` : ''}
+                    `;
+                }).join('')}
+            </div>
+        `;
+        statusEl.textContent = `已解析 ${rows.length} 行文案${videoNameCol >= 0 ? `，匹配 ${matchedCount} 个视频` : ''}，点击「确认导入」填充`;
+        statusEl.style.color = 'var(--success, #4ade80)';
+        return;
+    }
 
     // 表格模式走单独逻辑
     if (batchCutPasteMode === 'table') {
@@ -8496,6 +9517,96 @@ function confirmBatchCutPaste() {
         renderFcpxmlStylePanel();
         closeBatchCutPasteModal();
         showToast(`已从表格导入 ${result.segments.length} 个片段 + ${subHeaders.length} 个字幕列`, 'success');
+        return;
+    }
+
+    // 多视频文案模式：填充到现有视频片段 + 自动匹配
+    if (batchCutPasteMode === 'multi') {
+        const rows = parseTsvWithQuotes(text);
+        if (rows.length === 0) { showToast('未解析到任何内容', 'error'); return; }
+
+        const maxCols = Math.max(...rows.map(r => r.length));
+
+        // 检测视频名称列
+        const matchResult = batchCutDetectVideoNameCol(rows, maxCols);
+        const videoNameCol = matchResult.col;
+        const matchMap = matchResult.matchMap;
+
+        // 如果检测到名称列，先重新排序视频
+        if (videoNameCol >= 0 && Object.keys(matchMap).length > 0) {
+            // 收集所有视频信息的副本
+            const videoInfos = batchCutSegments.map(s => ({
+                videoPath: s.videoPath, videoDuration: s.videoDuration, thumbnail: s.thumbnail
+            }));
+            const used = new Set();
+
+            // 按匹配结果重新分配视频
+            for (let ri = 0; ri < Math.min(rows.length, batchCutSegments.length); ri++) {
+                if (matchMap[ri] !== undefined) {
+                    const vi = matchMap[ri];
+                    batchCutSegments[ri].videoPath = videoInfos[vi].videoPath;
+                    batchCutSegments[ri].videoDuration = videoInfos[vi].videoDuration;
+                    batchCutSegments[ri].thumbnail = videoInfos[vi].thumbnail;
+                    used.add(vi);
+                }
+            }
+            // 未匹配的行，顺序填充剩余视频
+            const remaining = videoInfos.map((v, i) => ({ ...v, i })).filter(v => !used.has(v.i));
+            let ri2 = 0;
+            for (let ri = 0; ri < Math.min(rows.length, batchCutSegments.length); ri++) {
+                if (matchMap[ri] === undefined && ri2 < remaining.length) {
+                    batchCutSegments[ri].videoPath = remaining[ri2].videoPath;
+                    batchCutSegments[ri].videoDuration = remaining[ri2].videoDuration;
+                    batchCutSegments[ri].thumbnail = remaining[ri2].thumbnail;
+                    ri2++;
+                }
+            }
+        }
+
+        // 确定字幕列（排除视频名称列）
+        const subtitleColIndices = [];
+        for (let ci = 0; ci < maxCols; ci++) {
+            if (ci !== videoNameCol) subtitleColIndices.push(ci);
+        }
+        const subtitleCount = subtitleColIndices.length;
+
+        // 自动调整字幕列数量
+        if (subtitleCount > batchCutSubtitleCols.length) {
+            while (batchCutSubtitleCols.length < subtitleCount) {
+                batchCutSubtitleCols.push({
+                    label: `字幕${batchCutSubtitleCols.length + 1}`,
+                    fontSize: 32, color: '#ffe500', position: 'center',
+                    bold: true, font: 'Playfair Display', fontFace: 'SemiBold', tracking: 0
+                });
+            }
+        }
+
+        // 填充字幕
+        const fillCount = Math.min(rows.length, batchCutSegments.length);
+        for (let i = 0; i < fillCount; i++) {
+            if (!batchCutSegments[i].subtitles) batchCutSegments[i].subtitles = [];
+            for (let si = 0; si < subtitleColIndices.length; si++) {
+                batchCutSegments[i].subtitles[si] = rows[i][subtitleColIndices[si]] || '';
+            }
+            while (batchCutSegments[i].subtitles.length < batchCutSubtitleCols.length) {
+                batchCutSegments[i].subtitles.push('');
+            }
+            batchCutSegments[i].name = (rows[i][subtitleColIndices[0]] || '').slice(0, 40) || batchCutSegments[i].name;
+        }
+
+        renderBatchCutTableHeader();
+        renderBatchCutSegments();
+        renderFcpxmlStylePanel();
+        closeBatchCutPasteModal();
+
+        const matchedCount = Object.keys(matchMap).length;
+        if (videoNameCol >= 0) {
+            showToast(`已填充 ${fillCount} 行文案，自动匹配了 ${matchedCount} 个视频`, 'success');
+        } else if (rows.length > batchCutSegments.length) {
+            showToast(`已填充 ${fillCount} 行（文案 ${rows.length} 行 > 视频 ${batchCutSegments.length} 个，多余已忽略）`, 'info');
+        } else {
+            showToast(`已填充 ${fillCount} 行文案（${subtitleCount} 个字幕列）`, 'success');
+        }
         return;
     }
 
@@ -8662,7 +9773,8 @@ async function startBatchCut() {
 
 // 导出 FCPXML 时间线（给达芬奇 / Final Cut Pro）
 async function exportBatchCutFcpxml() {
-    if (!batchCutFilePath) {
+    // 多视频模式不需要单一视频文件
+    if (!batchCutMultiMode && !batchCutFilePath) {
         showToast('请先选择视频文件', 'error');
         return;
     }
@@ -8673,30 +9785,53 @@ async function exportBatchCutFcpxml() {
         return;
     }
 
-    // 验证并转换时间
+    // 多视频模式：检查所有片段是否有视频路径
+    if (batchCutMultiMode) {
+        const missingVideo = selectedSegments.find(s => !s.videoPath);
+        if (missingVideo) {
+            showToast('存在没有视频文件的片段，请检查', 'error');
+            return;
+        }
+    }
+
+    // 构建片段数据
     const segments = [];
     for (let i = 0; i < selectedSegments.length; i++) {
         const seg = selectedSegments[i];
-        const start = parseBatchCutTime(seg.start);
-        if (start === null) {
-            showToast(`片段 "${seg.name}" 的入点无效: ${seg.start}`, 'error');
-            return;
+
+        if (batchCutMultiMode) {
+            // 多视频模式：整段视频，无需时间点
+            segments.push({
+                name: seg.name || `片段${i + 1}`,
+                subtitles: (seg.subtitles || [seg.name || '']).slice(),
+                start: 0,
+                end: null,
+                videoPath: seg.videoPath,
+                videoDuration: seg.videoDuration || 0
+            });
+        } else {
+            // 单视频模式：验证时间点
+            const start = parseBatchCutTime(seg.start);
+            if (start === null) {
+                showToast(`片段 "${seg.name}" 的入点无效: ${seg.start}`, 'error');
+                return;
+            }
+            const end = seg.end ? parseBatchCutTime(seg.end) : null;
+            if (seg.end && end === null) {
+                showToast(`片段 "${seg.name}" 的出点无效: ${seg.end}`, 'error');
+                return;
+            }
+            if (end !== null && end <= start) {
+                showToast(`片段 "${seg.name}" 的出点必须大于入点`, 'error');
+                return;
+            }
+            segments.push({
+                name: seg.name || `片段${i + 1}`,
+                subtitles: (seg.subtitles || [seg.name || '']).slice(),
+                start: start,
+                end: end
+            });
         }
-        const end = seg.end ? parseBatchCutTime(seg.end) : null;
-        if (seg.end && end === null) {
-            showToast(`片段 "${seg.name}" 的出点无效: ${seg.end}`, 'error');
-            return;
-        }
-        if (end !== null && end <= start) {
-            showToast(`片段 "${seg.name}" 的出点必须大于入点`, 'error');
-            return;
-        }
-        segments.push({
-            name: seg.name || `片段${i + 1}`,
-            subtitles: (seg.subtitles || [seg.name || '']).slice(),
-            start: start,
-            end: end
-        });
     }
 
     const outputDir = document.getElementById('media-output-path')?.value || '';
@@ -8706,18 +9841,20 @@ async function exportBatchCutFcpxml() {
 
         // 获取视频信息（帧率、时长）— 分辨率强制竖屏 1080x1920
         let duration = 0, fps = 30, resolution = '1080x1920';
-        try {
-            const infoResp = await apiFetch(`${API_BASE}/media/info`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ file_path: batchCutFilePath })
-            });
-            const info = await infoResp.json();
-            if (info.duration) duration = info.duration;
-            if (info.frame_rate) fps = parseFloat(info.frame_rate);
-            // 分辨率不用视频实际值，固定竖屏
-        } catch (e) {
-            console.warn('获取视频信息失败，使用默认值:', e.message);
+        const infoFilePath = batchCutMultiMode ? (selectedSegments[0]?.videoPath || '') : batchCutFilePath;
+        if (infoFilePath) {
+            try {
+                const infoResp = await apiFetch(`${API_BASE}/media/info`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ file_path: infoFilePath })
+                });
+                const info = await infoResp.json();
+                if (info.duration) duration = info.duration;
+                if (info.frame_rate) fps = parseFloat(info.frame_rate);
+            } catch (e) {
+                console.warn('获取视频信息失败，使用默认值:', e.message);
+            }
         }
 
         // 直接使用动态字幕列配置
@@ -8738,7 +9875,8 @@ async function exportBatchCutFcpxml() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                file_path: batchCutFilePath,
+                file_path: batchCutMultiMode ? '' : batchCutFilePath,
+                multi_video: batchCutMultiMode,
                 segments: segments,
                 output_dir: outputDir,
                 duration: duration,

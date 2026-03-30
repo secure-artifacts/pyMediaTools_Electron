@@ -1,10 +1,10 @@
 {
-  "name": "pymediatools",
+  "name": "videokit",
   "version": "2.1.3",
-  "description": "统一媒体工具包 - 字幕对齐 + 媒体转换",
+  "description": "视频工具包-批量：音频生成-reels视频制作-多媒体转换",
   "author": {
     "name": "TimCode",
-    "email": "pymediatools@example.com"
+    "email": "videokit@example.com"
   },
   "main": "electron/main.js",
   "scripts": {
@@ -38,8 +38,8 @@
     "wait-on": "^7.2.0"
   },
   "build": {
-    "appId": "com.timcode.pymediatools",
-    "productName": "pyMediaTools",
+    "appId": "com.timcode.videokit",
+    "productName": "VideoKit",
     "publish": [
       {
         "provider": "github",
@@ -71,6 +71,13 @@
             "!*.py",
             "!elevenlabs_settings.json",
             "!gladia_keys.json"
+          ]
+        },
+        {
+          "from": "assets",
+          "to": "assets",
+          "filter": [
+            "**/*"
           ]
         },
         {

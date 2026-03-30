@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 批量Reels - 烧录字幕
     burnSubtitles: (opts) => ipcRenderer.invoke('burn-subtitles', opts),
     reelsCompose: (opts) => ipcRenderer.invoke('reels-compose', opts),
+    concatVideo: (opts) => ipcRenderer.invoke('concat-video', opts),
     reelsComposeWysiwyg: (action, data) => ipcRenderer.invoke('reels-compose-wysiwyg', action, data),
     getMediaDuration: (filePath) => ipcRenderer.invoke('get-media-duration', filePath),
     saveRenderedAudio: (wavData) => ipcRenderer.invoke('save-rendered-audio', wavData),
@@ -104,5 +105,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 批量下载进度事件监听
     onBatchDownloadProgress: (callback) => {
         ipcRenderer.on('batch-download-progress', (event, data) => callback(data));
+    },
+
+    // 链接截图进度事件监听
+    onUrlThumbnailProgress: (callback) => {
+        ipcRenderer.on('url-thumbnail-progress', (event, data) => callback(event, data));
+    },
+
+    // 在 Finder/Explorer 中高亮显示文件
+    showItemInFolder: (filePath) => {
+        ipcRenderer.invoke('show-item-in-folder', filePath).catch(() => {});
     },
 });

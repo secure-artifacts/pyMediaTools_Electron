@@ -239,8 +239,8 @@ function createScrollOverlay(opts = {}) {
         scroll_to_x: opts.scroll_to_x ?? 90,
         scroll_to_y: opts.scroll_to_y ?? -200,      // 向上滚出
         scroll_speed: opts.scroll_speed ?? 0.8,
-        scroll_auto_stop: opts.scroll_auto_stop !== false, // 默认开启：文字全部可见后停止
-        scroll_auto_fit: opts.scroll_auto_fit !== false,   // 默认开启：字号自适应裁切区
+        scroll_auto_stop: opts.scroll_auto_stop === true, // 默认关闭
+        scroll_auto_fit: opts.scroll_auto_fit === true,   // 默认关闭
         scroll_min_fontsize: opts.scroll_min_fontsize ?? 16,
         // 卡片背景
         bg_enabled: opts.bg_enabled || false,
@@ -875,9 +875,9 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
     const duration = end - start;
     if (duration <= 0) return;
 
-    // 进度 × 速度，clamp 到 [0, 1]，到1后冻结在最终位置
-    const speed = parseFloat(ov.scroll_speed || 1);
-    let progress = ((currentTime - start) / duration) * speed;
+    // 进度 = (当前时间 - 开始) / 时长，clamp 到 [0, 1]
+    // 速度由 距离 ÷ 时间 自动决定，不再有 speed 乘数
+    let progress = (currentTime - start) / duration;
     progress = Math.max(0, Math.min(1, progress));
 
     // 插值当前位置
@@ -955,16 +955,31 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
         const bodyClipBot = clipY + clipH;
         const bodyClipH = bodyClipBot - bodyClipTop;
 
-        // 向上滚 (fromY > toY)：停在文字顶部刚进入 bodyClipTop 时
+        // 向上滚 (fromY > toY)
         if (fromY > toY) {
-            // 最终位置Y = 文字顶部刚好在 bodyClipTop + featherT 处
-            const stopY = bodyClipTop + featherT;
-            effectiveToY = Math.max(toY, stopY);
+            const visibleBodyH = bodyClipH - featherT - featherB;
+            if (totalTextH <= visibleBodyH) {
+                // 文字短于可见区：停在文字顶部刚好在 bodyClipTop + featherT 处（全部可见）
+                const stopY = bodyClipTop + featherT;
+                effectiveToY = Math.max(toY, stopY);
+            } else {
+                // 文字长于可见区：停在文字底部刚好到达 bodyClipBot - featherB 处
+                const stopY = bodyClipBot - featherB - totalTextH;
+                effectiveToY = Math.max(toY, stopY);
+            }
         }
-        // 向下滚 (fromY < toY)：停在文字底部刚好在 bodyClipBot - featherB 处
+        // 向下滚 (fromY < toY)
         else if (fromY < toY) {
-            const stopY = bodyClipBot - featherB - totalTextH;
-            effectiveToY = Math.min(toY, stopY);
+            const visibleBodyH = bodyClipH - featherT - featherB;
+            if (totalTextH <= visibleBodyH) {
+                // 文字短于可见区：停在文字底部刚好在 bodyClipBot - featherB 处（全部可见）
+                const stopY = bodyClipBot - featherB - totalTextH;
+                effectiveToY = Math.min(toY, stopY);
+            } else {
+                // 文字长于可见区：停在文字顶部刚好到达 bodyClipTop + featherT 处
+                const stopY = bodyClipTop + featherT;
+                effectiveToY = Math.min(toY, stopY);
+            }
         }
     }
 
@@ -1156,7 +1171,7 @@ function _drawScrollOverlay(ctx, ov, clipX, clipY, clipW, clipH, currentTime, ca
         ctx.font = '20px sans-serif';
         ctx.fillStyle = '#FF6B35';
         ctx.globalAlpha = 0.8;
-        ctx.fillText(`裁切区 ${Math.round(clipW)}×${Math.round(clipH)}  速度${speed}x`, clipX + 8, clipY - 8);
+        ctx.fillText(`裁切区 ${Math.round(clipW)}×${Math.round(clipH)}`, clipX + 8, clipY - 8);
         ctx.restore();
     }
 }

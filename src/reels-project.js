@@ -77,7 +77,7 @@ function collectProjectData(state) {
     return {
         version: PROJECT_VERSION,
         createdAt: new Date().toISOString(),
-        app: 'pyMediaTools Electron',
+        app: 'VideoKit',
         style: JSON.parse(JSON.stringify(style)),
         exportOpts: JSON.parse(JSON.stringify(exportOpts)),
         tasks: tasksData,

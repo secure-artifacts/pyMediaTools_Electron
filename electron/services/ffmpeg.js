@@ -1258,21 +1258,260 @@ async function applyAudioFx(filePath, outDir, data) {
             outputPath
         ]);
     } else {
-        const outExt = ['.mp3', '.wav', '.flac', '.m4a'].includes(ext) ? ext : '.mp3';
+        // 用户选择的输出格式，默认回退到输入格式或 mp3
+        const userFormat = (data.outputFormat || '').toLowerCase();
+        const formatMap = { 'mp3': '.mp3', 'wav': '.wav', 'flac': '.flac', 'm4a': '.m4a' };
+        const outExt = formatMap[userFormat] || (['.mp3', '.wav', '.flac', '.m4a'].includes(ext) ? ext : '.mp3');
         outputPath = path.join(outDir, `${baseName}_audioFX${outExt}`);
-        console.log('[AudioFX] 音频模式，输出:', outputPath);
+        console.log('[AudioFX] 音频模式，输出格式:', outExt, '输出:', outputPath);
         if (outExt === '.wav') {
             await runCommand('ffmpeg', ['-y', '-i', wavPath, '-c:a', 'copy', outputPath]);
         } else if (outExt === '.mp3') {
             await runCommand('ffmpeg', ['-y', '-i', wavPath, '-c:a', 'libmp3lame', '-b:a', '192k', '-ac', '2', outputPath]);
-        } else {
+        } else if (outExt === '.flac') {
+            await runCommand('ffmpeg', ['-y', '-i', wavPath, '-c:a', 'flac', outputPath]);
+        } else if (outExt === '.m4a') {
             await runCommand('ffmpeg', ['-y', '-i', wavPath, '-c:a', 'aac', '-b:a', '192k', outputPath]);
+        } else {
+            await runCommand('ffmpeg', ['-y', '-i', wavPath, '-c:a', 'libmp3lame', '-b:a', '192k', '-ac', '2', outputPath]);
         }
     }
 
     try { fs.unlinkSync(wavPath); } catch(e) {}
     console.log('[AudioFX] 完成:', outputPath);
     return [outputPath];
+}
+
+/**
+ * 文字水印：使用 FFmpeg drawtext 滤镜给视频添加文字水印
+ */
+async function applyWatermark(filePath, outDir, wmOpts = {}) {
+    const baseName = path.parse(filePath).name;
+    const ext = path.extname(filePath).toLowerCase();
+    const outputPath = path.join(outDir, `${baseName}_watermark${ext === '.mov' ? '.mov' : '.mp4'}`);
+
+    const text = (wmOpts.text || 'AI Generated').replace(/'/g, "'\\''").replace(/:/g, '\\:');
+    const font = wmOpts.font || 'Arial';
+    const fontSize = parseInt(wmOpts.font_size) || 24;
+    const color = wmOpts.color || '#ffffff';
+    const opacity = parseFloat(wmOpts.opacity ?? 1);
+    const hasStroke = wmOpts.stroke !== false;
+    const strokeColor = wmOpts.stroke_color || '#000000';
+    const strokeWidth = parseInt(wmOpts.stroke_width) || 2;
+    const hasShadow = wmOpts.shadow === true;
+    const posX = wmOpts.x || 'w-tw-10';
+    const posY = wmOpts.y || '10';
+
+    // 颜色转换：#RRGGBB -> FFmpeg 的 RRGGBB@opacity 格式
+    const hexToFFmpegColor = (hex, alpha) => {
+        const clean = hex.replace('#', '');
+        const a = Math.max(0, Math.min(1, alpha));
+        return `0x${clean}@${a.toFixed(2)}`;
+    };
+
+    const fontColor = hexToFFmpegColor(color, opacity);
+
+    // 解析字体路径 — 尝试从系统字体目录找
+    let fontFile = '';
+    const fontsDir = resolveLibassFontsDir();
+    if (fontsDir) {
+        const candidates = [
+            `${font}.ttf`, `${font}.otf`, `${font}.TTF`, `${font}.OTF`,
+            `${font.replace(/\s/g, '')}.ttf`, `${font.replace(/\s/g, '')}.otf`,
+        ];
+        for (const c of candidates) {
+            const p = path.join(fontsDir, c);
+            if (fs.existsSync(p)) { fontFile = p; break; }
+        }
+    }
+    // macOS 系统字体  
+    if (!fontFile && process.platform === 'darwin') {
+        const sysFonts = ['/System/Library/Fonts', '/Library/Fonts', path.join(os.homedir(), 'Library/Fonts')];
+        outer: for (const dir of sysFonts) {
+            try {
+                const files = fs.readdirSync(dir);
+                for (const f of files) {
+                    if (f.toLowerCase().includes(font.toLowerCase()) && /\.(ttf|otf|ttc)$/i.test(f)) {
+                        fontFile = path.join(dir, f);
+                        break outer;
+                    }
+                }
+            } catch { }
+        }
+    }
+    // Windows 系统字体
+    if (!fontFile && process.platform === 'win32') {
+        const winFontsDir = 'C:\\Windows\\Fonts';
+        try {
+            const files = fs.readdirSync(winFontsDir);
+            for (const f of files) {
+                if (f.toLowerCase().includes(font.toLowerCase()) && /\.(ttf|otf|ttc)$/i.test(f)) {
+                    fontFile = path.join(winFontsDir, f);
+                    break;
+                }
+            }
+        } catch { }
+    }
+
+    // 构建 drawtext 滤镜
+    let drawtext = `drawtext=text='${text}':fontsize=${fontSize}:fontcolor=${fontColor}:x=${posX}:y=${posY}`;
+    if (fontFile) {
+        const escapedFontFile = fontFile.replace(/\\/g, '/').replace(/:/g, '\\:');
+        drawtext += `:fontfile='${escapedFontFile}'`;
+    } else {
+        drawtext += `:font='${font}'`;
+    }
+    if (hasStroke) {
+        const bColor = hexToFFmpegColor(strokeColor, opacity);
+        drawtext += `:borderw=${strokeWidth}:bordercolor=${bColor}`;
+    }
+    if (hasShadow) {
+        drawtext += `:shadowx=2:shadowy=2:shadowcolor=0x000000@0.5`;
+    }
+
+    console.log('[Watermark] drawtext filter:', drawtext);
+
+    const args = [
+        '-y', '-i', filePath,
+        '-vf', drawtext,
+        '-c:v', 'libx264', '-crf', '18', '-preset', 'medium',
+        '-c:a', 'copy',
+        '-movflags', '+faststart',
+        outputPath
+    ];
+
+    await runCommand('ffmpeg', args, { timeout: Math.max(DEFAULT_TIMEOUT, 3600000) });
+
+    if (!fs.existsSync(outputPath)) {
+        throw new Error(`水印输出文件未生成: ${outputPath}`);
+    }
+
+    console.log('[Watermark] 完成:', outputPath);
+    return [outputPath];
+}
+/**
+ * 视频首尾拼接，处理 Hook 片段与正片的拼接（包含分辨率归一化、转场滤镜、音视频轨道同步）
+ * @param {object} opts
+ */
+async function concatVideo(opts) {
+    const {
+        introPath, mainPath, outputPath,
+        speed = 1.0, transition = 'none', transDuration = 0.5,
+        targetWidth = 1080, targetHeight = 1920, fps = 30
+    } = opts;
+
+    if (!fs.existsSync(introPath)) throw new Error(`找不到前置素材: ${introPath}`);
+    if (!fs.existsSync(mainPath)) throw new Error(`找不到正片素材: ${mainPath}`);
+
+    const util = require('util');
+    const { execFile } = require('child_process');
+    const execFileAsync = util.promisify(execFile);
+    const ffprobe = resolveCommand('ffprobe');
+
+    // 1. 探测 Hook 是否包含音频流
+    let hookHasAudio = false;
+    try {
+        const { stdout } = await execFileAsync(ffprobe, [
+            '-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', introPath
+        ]);
+        hookHasAudio = stdout.trim().length > 0;
+    } catch (e) { }
+
+    const sessionId = crypto.randomBytes(4).toString('hex');
+    const tmpDir = os.tmpdir();
+    const hookNormPath = path.join(tmpDir, `hook_norm_${sessionId}.mp4`);
+
+    let filterComplex = '';
+    const speedRatio = speed > 0 ? parseFloat(speed) : 1.0;
+    const vPts = (1.0 / speedRatio).toFixed(5);
+    
+    // a. 画面归一化（缩放、黑边填充、帧率、变速）
+    filterComplex += `[0:v]setpts=${vPts}*PTS,scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,fps=${fps}[vout];`;
+
+    // b. 音频归一化（无音频则使用空白音轨，同步变速调音）
+    if (hookHasAudio) {
+        if (speedRatio !== 1.0) {
+            if (speedRatio >= 0.5 && speedRatio <= 2.0) {
+                filterComplex += `[0:a]atempo=${speedRatio},aformat=sample_rates=48000:channel_layouts=stereo[aout]`;
+            } else if (speedRatio > 2.0 && speedRatio <= 4.0) {
+                filterComplex += `[0:a]atempo=2.0,atempo=${(speedRatio/2.0).toFixed(4)},aformat=sample_rates=48000:channel_layouts=stereo[aout]`;
+            } else if (speedRatio < 0.5 && speedRatio >= 0.25) {
+                filterComplex += `[0:a]atempo=0.5,atempo=${(speedRatio/0.5).toFixed(4)},aformat=sample_rates=48000:channel_layouts=stereo[aout]`;
+            } else {
+                filterComplex += `[0:a]anull,aformat=sample_rates=48000:channel_layouts=stereo[aout]`;
+            }
+        } else {
+            filterComplex += `[0:a]aformat=sample_rates=48000:channel_layouts=stereo[aout]`;
+        }
+    } else {
+        filterComplex += `[1:a]aformat=sample_rates=48000:channel_layouts=stereo[aout]`;
+    }
+
+    const normArgs = [
+        '-y'
+    ];
+    
+    // Add trimming if specified
+    if (opts.trimStart != null && opts.trimStart > 0) {
+        normArgs.push('-ss', String(opts.trimStart));
+    }
+    if (opts.trimEnd != null && opts.trimEnd > 0) {
+        normArgs.push('-to', String(opts.trimEnd));
+    }
+
+    normArgs.push(
+        '-i', introPath,
+        '-f', 'lavfi', '-i', 'anullsrc=cl=stereo:r=48000',
+        '-filter_complex', filterComplex,
+        '-map', '[vout]',
+        '-map', '[aout]',
+        '-c:v', 'libx264', '-crf', '18', '-preset', 'ultrafast',
+        '-c:a', 'aac', '-b:a', '192k',
+        '-shortest',
+        hookNormPath
+    );
+
+    console.log('[ConcatVideo] 预处理 Hook 参数:', normArgs.join(' '));
+    await runCommand('ffmpeg', normArgs, { timeout: 300000 });
+
+    const hookDur = await getDuration(hookNormPath);
+    console.log(`[ConcatVideo] Hook 预处理完成 (时长: ${hookDur}s)`);
+
+    const concatArgs = ['-y', '-i', hookNormPath, '-i', mainPath];
+    const finalTransDur = parseFloat(transDuration) || 0;
+
+    // Map UI anim engine preset to standard xfade transition names
+    const FFMPEG_XFADE_MAP = {
+        'fade_in': 'fade', 'fade_out': 'fade', 'fade_both': 'fade',
+        'pop_in': 'zoomin', 'pop_out': 'zoomin', 'pop_both': 'zoomin',
+        'sway_in': 'smoothleft', 'sway_out': 'smoothright', 'sway_both': 'smoothleft',
+        'slide_left_in': 'slideleft', 'slide_right_in': 'slideright', 'slide_up_in': 'slideup', 'slide_down_in': 'slidedown',
+        'slide_left_out': 'slideleft', 'slide_right_out': 'slideright', 'slide_up_out': 'slideup', 'slide_down_out': 'slidedown',
+        'slide_left_both': 'slideleft', 'slide_right_both': 'slideright', 'slide_up_both': 'slideup', 'slide_down_both': 'slidedown'
+    };
+    const xfadeName = FFMPEG_XFADE_MAP[transition] || transition;
+
+    if (transition === 'none' || finalTransDur <= 0 || hookDur <= finalTransDur) {
+        concatArgs.push(
+            '-filter_complex', '[0:v][0:a][1:v][1:a]concat=n=2:v=1:a=1[v][a]',
+            '-map', '[v]', '-map', '[a]'
+        );
+    } else {
+        const offset = Math.max(0.1, hookDur - finalTransDur).toFixed(3);
+        concatArgs.push(
+            '-filter_complex', `[0:v][1:v]xfade=transition=${xfadeName}:duration=${finalTransDur}:offset=${offset}[v];[0:a][1:a]acrossfade=d=${finalTransDur}[a]`,
+            '-map', '[v]', '-map', '[a]'
+        );
+    }
+
+    concatArgs.push('-c:v', 'libx264', '-crf', '18', '-preset', 'fast', '-c:a', 'aac', '-b:a', '192k', outputPath);
+    
+    console.log('[ConcatVideo] 合并正片参数:', concatArgs.join(' '));
+    await runCommand('ffmpeg', concatArgs, { timeout: 600000 });
+
+    try { fs.unlinkSync(hookNormPath); } catch (e) {}
+    
+    return { success: true, outputPath };
 }
 
 module.exports = {
@@ -1291,6 +1530,7 @@ module.exports = {
     detectSilence,
     smartSplitAnalyze,
     applyAudioFx,
+    applyWatermark,
     formatSceneTime,
     parseTimecode,
     parseCutPoints,
@@ -1298,4 +1538,5 @@ module.exports = {
     buildBlackMp4Args,
     batchCut,
     composeReel,
+    concatVideo,
 };

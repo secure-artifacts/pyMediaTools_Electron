@@ -12,8 +12,13 @@ jobs:
         include:
           - os: macos-latest
             platform: mac
+            arch_flags: '--arm64 --x64'
           - os: windows-latest
             platform: win
+            arch_flags: '--x64'
+          - os: ubuntu-latest
+            platform: linux
+            arch_flags: '--x64'
 
     runs-on: ${{ matrix.os }}
 
@@ -64,7 +69,7 @@ jobs:
       - name: Package Electron App
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --${{ matrix.platform }} --publish never
+        run: npx electron-builder --${{ matrix.platform }} ${{ matrix.arch_flags }} --publish never
 
       - name: Attest Build Provenance
         uses: actions/attest-build-provenance@v2
@@ -73,6 +78,7 @@ jobs:
             dist-electron/*.dmg
             dist-electron/*.zip
             dist-electron/*.exe
+            dist-electron/*.AppImage
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
@@ -82,6 +88,7 @@ jobs:
             dist-electron/*.dmg
             dist-electron/*.zip
             dist-electron/*.exe
+            dist-electron/*.AppImage
             dist-electron/*.blockmap
             dist-electron/latest*.yml
 

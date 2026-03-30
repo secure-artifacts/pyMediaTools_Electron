@@ -119,6 +119,7 @@ async function prepareBg(opts) {
         duration,
         loopFade = true,
         loopFadeDur = 1.0,
+        bgScale = 100,
     } = opts;
 
     // 路径验证 + 自动搜索修复
@@ -157,7 +158,28 @@ async function prepareBg(opts) {
     fs.mkdirSync(framesDir, { recursive: true });
 
     const isImage = isImageMedia(backgroundPath);
-    const scaleCropFilter = `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}`;
+    
+    // 构建缩放+裁切滤镜，支持 bgScale 参数
+    const scaleFactor = (bgScale || 100) / 100;
+    let scaleCropFilter;
+    if (Math.abs(scaleFactor - 1.0) < 0.01) {
+        // 默认 100%: 标准 cover 模式
+        scaleCropFilter = `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}`;
+    } else {
+        // 带缩放：先放大到 scaleFactor 倍的 cover 尺寸，再裁切到目标尺寸
+        // 例如 150% → 先 scale 到 1.5x cover 大小，crop 到 1080x1920（等效 zoom in）
+        // 50% → 先 scale 到 0.5x cover 大小，pad 到目标尺寸（等效 zoom out）
+        const scaledW = Math.round(targetWidth * scaleFactor);
+        const scaledH = Math.round(targetHeight * scaleFactor);
+        if (scaleFactor >= 1.0) {
+            // Zoom in: 放大后裁切
+            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=increase,crop=${targetWidth}:${targetHeight}`;
+        } else {
+            // Zoom out: 缩小后黑边填充
+            scaleCropFilter = `scale=${scaledW}:${scaledH}:force_original_aspect_ratio=decrease,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:color=black`;
+        }
+        console.log(`[WYSIWYG-BG] 背景缩放: ${bgScale}%, filter: ${scaleCropFilter}`);
+    }
 
     if (isImage) {
         // 图片背景：直接缩放 + 输出一帧（后续代码会重复使用）
@@ -260,13 +282,57 @@ function runFFmpegSync(ffmpeg, args) {
 // 阶段 2: FFmpeg 编码器会话管理
 // ═══════════════════════════════════════════════════════
 
+/**
+ * 探测 GPU 编码器是否可用：试编码 3 帧纯色测试帧
+ * 如果 GPU 编码器初始化失败（驱动/硬件不支持），快速返回 false
+ */
+function _probeGPUEncoder(ffmpegPath, vcodec, encoderArgs, width, height, fps) {
+    try {
+        const settings = require('./settings');
+        const testOut = settings.secureTmpFile('gpu_probe', '.mp4');
+        const testArgs = [
+            '-y',
+            '-f', 'rawvideo', '-pix_fmt', 'rgba',
+            '-s', `${width}x${height}`,
+            '-framerate', String(fps),
+            '-i', 'pipe:0',
+            '-an',
+            ...encoderArgs,
+            '-pix_fmt', 'yuv420p',
+            '-frames:v', '3',
+            testOut,
+        ];
+        console.log(`[WYSIWYG] 探测 GPU 编码器 (${vcodec})...`);
+        const testProc = require('child_process').spawnSync(ffmpegPath, testArgs, {
+            input: Buffer.alloc(width * height * 4 * 3), // 3 帧纯黑 RGBA
+            timeout: 15000,
+            stdio: ['pipe', 'ignore', 'pipe'],
+        });
+        // 清理测试文件
+        try { fs.unlinkSync(testOut); } catch (_) { }
+
+        if (testProc.status === 0) {
+            console.log(`[WYSIWYG] GPU 编码器 ${vcodec} 可用 ✓`);
+            return true;
+        } else {
+            const stderr = (testProc.stderr || '').toString().slice(-500);
+            console.warn(`[WYSIWYG] GPU 编码器 ${vcodec} 不可用 (code=${testProc.status}): ${stderr}`);
+            return false;
+        }
+    } catch (e) {
+        console.warn(`[WYSIWYG] GPU 编码器探测异常: ${e.message}`);
+        return false;
+    }
+}
+
 async function startSession(opts) {
     let {
         width = 1080, height = 1920, fps = 30,
         outputPath, voicePath, voiceVolume = 1.0,
         bgVolume = 0.1, backgroundPath, bgHasAudio = false,
         bgmPath = '', bgmVolume = 0,
-        reverbEnabled = false, reverbPreset = 'hall', reverbMix = 30, stereoWidth = 100,
+        audioDurScale = 100,
+        reverbEnabled = false, reverbPreset = 'hall', reverbMix = 30, stereoWidth = 100, audioFxTarget = 'all',
         renderedAudioPath = null,
         useGPU = false,
     } = opts;
@@ -296,27 +362,37 @@ async function startSession(opts) {
     const settings = require('./settings');
     const tempVideo = path.join(settings.getSecureTmpDir(), `reels_wysiwyg_${sessionId}.mp4`);
 
-    // 编码器选择：GPU 硬件加速 vs CPU
-    let vcodec = 'libx264';
+    // 编码器选择：GPU 硬件加速 vs CPU（带自动回退）
     let encoderArgs;
     const platform = process.platform;
+    const cpuFallbackArgs = ['-c:v', 'libx264', '-preset', 'medium', '-crf', '15'];
+    let gpuFailed = false;
 
     if (useGPU) {
         if (platform === 'darwin') {
-            vcodec = 'h264_videotoolbox';
-            // VideoToolbox 不支持 CRF，用码率控制
-            encoderArgs = ['-c:v', vcodec, '-b:v', '12M'];
-            console.log(`[WYSIWYG] 使用 GPU 编码 (VideoToolbox, 12Mbps)`);
+            const gpuArgs = ['-c:v', 'h264_videotoolbox', '-b:v', '12M'];
+            if (_probeGPUEncoder(ffmpeg, 'h264_videotoolbox', gpuArgs, width, height, fps)) {
+                encoderArgs = gpuArgs;
+                console.log(`[WYSIWYG] 使用 GPU 编码 (VideoToolbox, 12Mbps)`);
+            } else {
+                gpuFailed = true;
+            }
         } else if (platform === 'win32') {
-            vcodec = 'h264_nvenc';
-            encoderArgs = ['-c:v', vcodec, '-preset', 'p5', '-cq', '15', '-b:v', '0'];
-            console.log(`[WYSIWYG] 使用 GPU 编码 (NVENC, CQ=15)`);
-        } else {
-            // Linux / 其他：回退到 CPU
-            encoderArgs = ['-c:v', 'libx264', '-preset', 'medium', '-crf', '15'];
+            const gpuArgs = ['-c:v', 'h264_nvenc', '-preset', 'p5', '-cq', '15', '-b:v', '0'];
+            if (_probeGPUEncoder(ffmpeg, 'h264_nvenc', gpuArgs, width, height, fps)) {
+                encoderArgs = gpuArgs;
+                console.log(`[WYSIWYG] 使用 GPU 编码 (NVENC, CQ=15)`);
+            } else {
+                gpuFailed = true;
+            }
+        }
+
+        if (gpuFailed || !encoderArgs) {
+            console.log(`[WYSIWYG] ⚠️ GPU 编码器不可用，自动回退到 CPU (libx264) 编码`);
+            encoderArgs = cpuFallbackArgs;
         }
     } else {
-        encoderArgs = ['-c:v', 'libx264', '-preset', 'medium', '-crf', '15'];
+        encoderArgs = cpuFallbackArgs;
     }
 
     const args = [
@@ -349,16 +425,27 @@ async function startSession(opts) {
         id: sessionId, proc, tempVideo, outputPath,
         voicePath, voiceVolume, bgVolume, backgroundPath, bgHasAudio,
         bgmPath, bgmVolume,
-        reverbEnabled, reverbPreset, reverbMix, stereoWidth,
+        audioDurScale,
+        reverbEnabled, reverbPreset, reverbMix, stereoWidth, audioFxTarget,
         renderedAudioPath,
         width, height, fps,
         stderr: '', frameCount: 0, bytesWritten: 0,
         closed: false, encoderExited: false, encoderExitCode: null,
+        gpuFallback: gpuFailed,  // 记录是否发生了 GPU 回退
     };
 
     if (renderedAudioPath) {
         console.log(`[WYSIWYG] 使用预渲染音频 (Web Audio WYSIWYG): ${renderedAudioPath}`);
     }
+
+    // 防止 FFmpeg 意外退出时 stdin.write 触发 EPIPE 崩溃
+    proc.stdin.on('error', (err) => {
+        if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') {
+            console.warn(`[WYSIWYG] stdin 管道断开 (${err.code})，FFmpeg 可能已退出`);
+        } else {
+            console.error(`[WYSIWYG] stdin 错误: ${err.message}`);
+        }
+    });
 
     proc.stderr.on('data', (chunk) => {
         session.stderr = (session.stderr + chunk.toString()).slice(-4000);
@@ -372,12 +459,15 @@ async function startSession(opts) {
         session.encoderExited = true;
         session.encoderExitCode = code;
         console.log(`[WYSIWYG] FFmpeg 编码退出 (code=${code}), 帧: ${session.frameCount}`);
+        if (code !== 0) {
+            console.error(`[WYSIWYG] FFmpeg stderr: ${session.stderr.slice(-800)}`);
+        }
     });
 
     sessions.set(sessionId, session);
 
     // 等待 FFmpeg 进程启动就绪（rawvideo 模式下管道初始化需要时间）
-    await new Promise(r => setTimeout(r, 200));
+    await new Promise(r => setTimeout(r, 300));
     if (session.encoderExited) {
         console.error(`[WYSIWYG] FFmpeg 启动失败! stderr: ${session.stderr}`);
         sessions.delete(sessionId);
@@ -391,11 +481,12 @@ async function writeFrame(sessionId, rawData) {
     const session = sessions.get(sessionId);
     if (!session || session.closed) {
         console.error(`[WYSIWYG] writeFrame: 会话无效 (id=${sessionId})`);
-        return false;
+        return { ok: false, error: '编码会话无效或已关闭' };
     }
     if (session.encoderExited) {
-        console.error(`[WYSIWYG] writeFrame: FFmpeg 已退出 (code=${session.encoderExitCode}), stderr: ${session.stderr.slice(-500)}`);
-        return false;
+        const detail = session.stderr.slice(-500);
+        console.error(`[WYSIWYG] writeFrame: FFmpeg 已退出 (code=${session.encoderExitCode}), stderr: ${detail}`);
+        return { ok: false, error: `FFmpeg 编码器已退出 (code=${session.encoderExitCode})`, detail };
     }
 
     try {
@@ -412,16 +503,28 @@ async function writeFrame(sessionId, rawData) {
             buf = Buffer.from(new Uint8Array(Object.values(rawData)));
         } else {
             console.error(`[WYSIWYG] writeFrame: 无法识别的数据类型: ${typeof rawData}`);
-            return false;
+            return { ok: false, error: `帧数据格式无法识别 (${typeof rawData})` };
         }
 
+        // 验证帧数据大小（RGBA 数据应 = width * height * 4）
+        const expectedSize = session.width * session.height * 4;
         if (buf.length < 100) {
             console.warn(`[WYSIWYG] writeFrame: 帧数据太小 (${buf.length} bytes)，跳过`);
-            return true;
+            return { ok: true };
+        }
+        if (buf.length !== expectedSize && session.frameCount === 0) {
+            console.warn(`[WYSIWYG] ⚠️ 首帧数据大小不匹配: 实际 ${buf.length} bytes, 期望 ${expectedSize} bytes (${session.width}x${session.height}x4)`);
         }
 
         if (session.frameCount === 0) {
-            console.log(`[WYSIWYG] 首帧大小: ${(buf.length / 1024 / 1024).toFixed(2)} MB`);
+            console.log(`[WYSIWYG] 首帧大小: ${(buf.length / 1024 / 1024).toFixed(2)} MB (期望 ${(expectedSize / 1024 / 1024).toFixed(2)} MB)`);
+        }
+
+        // 检查 FFmpeg 是否在写入前已退出
+        if (session.encoderExited) {
+            const detail = session.stderr.slice(-500);
+            console.error(`[WYSIWYG] FFmpeg 在写帧前退出! stderr: ${detail}`);
+            return { ok: false, error: `FFmpeg 编码器意外退出`, detail };
         }
 
         const written = session.proc.stdin.write(buf);
@@ -433,13 +536,24 @@ async function writeFrame(sessionId, rawData) {
                 setTimeout(r, 5000);
             });
         }
-        return true;
+
+        // 写入后检查 FFmpeg 是否还活着（尤其是前几帧，编码器可能延迟初始化失败）
+        if (session.frameCount <= 5) {
+            await new Promise(r => setTimeout(r, 50)); // 给 FFmpeg 一点处理时间
+            if (session.encoderExited && session.encoderExitCode !== 0) {
+                const detail = session.stderr.slice(-500);
+                console.error(`[WYSIWYG] FFmpeg 在第 ${session.frameCount} 帧后退出! stderr: ${detail}`);
+                return { ok: false, error: `FFmpeg 在第 ${session.frameCount} 帧后崩溃退出`, detail };
+            }
+        }
+
+        return { ok: true };
     } catch (e) {
         console.error(`[WYSIWYG] 写帧失败 (#${session.frameCount}): ${e.message}`);
         if (session.stderr) {
             console.error(`[WYSIWYG] FFmpeg stderr: ${session.stderr.slice(-500)}`);
         }
-        return false;
+        return { ok: false, error: `写帧异常: ${e.message}`, detail: session.stderr.slice(-500) };
     }
 }
 
@@ -627,10 +741,24 @@ async function mixAudio(session) {
     let { tempVideo, outputPath, voicePath, voiceVolume, bgVolume, backgroundPath, bgHasAudio, bgmPath, bgmVolume } = session;
 
     // ═══ Chromium Web Audio 离线渲染（隐藏窗口 — 与预览 100% 同引擎）═══
-    if (voicePath && (session.reverbEnabled || (session.stereoWidth && session.stereoWidth !== 100))) {
+    let targetPathToRender = null;
+    let targetKey = null; // 'voice', 'bg', 'bgm'
+
+    if (session.reverbEnabled || (session.stereoWidth && session.stereoWidth !== 100)) {
+       const fxT = session.audioFxTarget || 'all';
+       if ((fxT === 'voice' || fxT === 'all') && voicePath) {
+           targetPathToRender = voicePath; targetKey = 'voice';
+       } else if ((fxT === 'bg' || fxT === 'all') && backgroundPath) {
+           targetPathToRender = backgroundPath; targetKey = 'bg';
+       } else if ((fxT === 'bgm' || fxT === 'all') && bgmPath) {
+           targetPathToRender = bgmPath; targetKey = 'bgm';
+       }
+    }
+
+    if (targetPathToRender) {
         try {
             const wavResult = await renderChromiumAudioWav({
-                filePath: voicePath,
+                filePath: targetPathToRender,
                 reverbEnabled: session.reverbEnabled,
                 reverbPreset: session.reverbPreset,
                 reverbMix: session.reverbMix,
@@ -638,11 +766,25 @@ async function mixAudio(session) {
             });
 
             if (wavResult) {
-                voicePath = wavResult;
-                voiceVolume = 1.0;
+                if (targetKey === 'voice') {
+                    voicePath = wavResult;
+                    voiceVolume = 1.0;
+                    session._renderedVoiceCleanup = wavResult;
+                } else if (targetKey === 'bg') {
+                    // 重要: backgroundPath 同时是视频源，不能替换为 WAV！
+                    // 将渲染后的背景音频存到独立变量，后面作为额外输入混入
+                    session._renderedBgAudioPath = wavResult;
+                    session._renderedBgCleanup = wavResult;
+                    // 标记原始背景音频不再需要（已经被渲染过了）
+                    bgHasAudio = false;
+                    console.log(`[WYSIWYG] bg 音频已渲染为 WAV: ${wavResult}`);
+                } else if (targetKey === 'bgm') {
+                    bgmPath = wavResult;
+                    session._renderedBgmCleanup = wavResult;
+                }
+
                 session.reverbEnabled = false;
                 session.stereoWidth = 100;
-                session._renderedVoiceCleanup = wavResult;
             } else {
                 throw new Error('Chromium render returned null/false');
             }
@@ -653,6 +795,9 @@ async function mixAudio(session) {
 
     // 检测 BGM 是否有效
     const hasBgm = bgmPath && fs.existsSync(bgmPath) && bgmVolume > 0.001;
+    // 检测是否有渲染后的背景音频（bg 层特效渲染产物）
+    const renderedBgAudio = session._renderedBgAudioPath && fs.existsSync(session._renderedBgAudioPath)
+        ? session._renderedBgAudioPath : null;
 
     let args;
 
@@ -662,39 +807,63 @@ async function mixAudio(session) {
         const wantBgAudio = bgVolumeVal > 0.001;
         const bgReallyHasAudio = wantBgAudio && backgroundPath && fs.existsSync(backgroundPath) && hasAudioTrack(backgroundPath);
 
-        if (bgReallyHasAudio && hasBgm) {
-            console.log('[WYSIWYG] 无配音，混合背景音频 + BGM');
-            args = ['-y', '-i', tempVideo,
-                '-stream_loop', '-1', '-i', backgroundPath,
-                '-stream_loop', '-1', '-i', bgmPath,
-                '-filter_complex',
-                `[1:a]volume=${bgVolumeVal.toFixed(3)}[bg];[2:a]volume=${bgmVolume.toFixed(3)}[bgm];[bg][bgm]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]`,
-                '-map', '0:v', '-map', '[aout]',
-                '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', outputPath];
+        // 收集所有音频源
+        let audioInputs = []; // [{path, volume, loop}]
+        if (renderedBgAudio) {
+            // 渲染后的背景音频（已含特效），不需要 loop
+            audioInputs.push({ path: renderedBgAudio, volume: bgVolumeVal, loop: false });
         } else if (bgReallyHasAudio) {
-            console.log('[WYSIWYG] 无配音，提取背景音频');
-            args = ['-y', '-i', tempVideo, '-stream_loop', '-1', '-i', backgroundPath,
-                '-filter_complex', `[1:a]volume=${bgVolumeVal.toFixed(3)}[aout]`,
-                '-map', '0:v', '-map', '[aout]',
-                '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', outputPath];
-        } else if (hasBgm) {
-            console.log('[WYSIWYG] 无配音，仅 BGM');
-            args = ['-y', '-i', tempVideo,
-                '-stream_loop', '-1', '-i', bgmPath,
-                '-filter_complex', `[1:a]volume=${bgmVolume.toFixed(3)}[aout]`,
-                '-map', '0:v', '-map', '[aout]',
-                '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', outputPath];
-        } else {
-            console.log('[WYSIWYG] 无配音且背景无音频，直接拷贝视频');
+            audioInputs.push({ path: backgroundPath, volume: bgVolumeVal, loop: true });
+        }
+        if (hasBgm) {
+            audioInputs.push({ path: bgmPath, volume: bgmVolume, loop: true });
+        }
+
+        if (audioInputs.length === 0) {
+            console.log('[WYSIWYG] 无配音且无音频源，直接拷贝视频');
             args = ['-y', '-i', tempVideo, '-c:v', 'copy', '-an', '-movflags', '+faststart', outputPath];
+        } else {
+            console.log(`[WYSIWYG] 无配音，混合 ${audioInputs.length} 个音频源`);
+            args = ['-y', '-i', tempVideo];
+            let nextIdx = 1;
+            for (const ai of audioInputs) {
+                if (ai.loop) args.push('-stream_loop', '-1');
+                args.push('-i', ai.path);
+                nextIdx++;
+            }
+            let filterParts = [];
+            let labels = [];
+            audioInputs.forEach((ai, i) => {
+                const idx = i + 1;
+                const label = `[a${i}]`;
+                filterParts.push(`[${idx}:a]volume=${ai.volume.toFixed(3)}${label}`);
+                labels.push(label);
+            });
+            if (labels.length > 1) {
+                filterParts.push(`${labels.join('')}amix=inputs=${labels.length}:duration=first:dropout_transition=0:normalize=0[aout]`);
+            } else {
+                filterParts.push(`${labels[0]}acopy[aout]`);
+            }
+            args.push('-filter_complex', filterParts.join(';'),
+                '-map', '0:v', '-map', '[aout]',
+                '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', outputPath);
         }
     } else {
         args = ['-y', '-i', tempVideo, '-i', voicePath];
 
         let nextInputIdx = 2;
         const bgVolumeVal2 = typeof bgVolume === 'number' ? bgVolume : 0.1;
+
+        // 渲染后的背景音频（优先于原始背景音轨）
+        let renderedBgInputIdx = -1;
+        if (renderedBgAudio) {
+            args.push('-i', renderedBgAudio);
+            renderedBgInputIdx = nextInputIdx;
+            nextInputIdx++;
+        }
+
         // 二次验证：即使前端标记 bgHasAudio=true，也用 ffprobe 实际检测是否真有音频轨
-        const bgWanted = bgHasAudio && bgVolumeVal2 > 0.001 && backgroundPath && fs.existsSync(backgroundPath);
+        const bgWanted = !renderedBgAudio && bgHasAudio && bgVolumeVal2 > 0.001 && backgroundPath && fs.existsSync(backgroundPath);
         const bgReallyHasAudio = bgWanted ? hasAudioTrack(backgroundPath) : false;
         if (bgWanted && !bgReallyHasAudio) {
             console.log(`[WYSIWYG] 背景视频无音频轨道，跳过背景音频混合: ${backgroundPath}`);
@@ -729,9 +898,26 @@ async function mixAudio(session) {
         // 人声音量
         filterParts.push(`[1:a]volume=${voiceVolume.toFixed(3)}[vpre]`);
 
+        // 音频变速（atempo）：audioDurScale=150% → 减速为 0.667x（拉长1.5倍）
+        const aDurScale = session.audioDurScale || 100;
+        if (aDurScale !== 100) {
+            let targetTempo = 100 / aDurScale;
+            const tempoFilters = [];
+            while (targetTempo < 0.5) {
+                tempoFilters.push('atempo=0.5');
+                targetTempo /= 0.5;
+            }
+            while (targetTempo > 100.0) {
+                tempoFilters.push('atempo=100.0');
+                targetTempo /= 100.0;
+            }
+            tempoFilters.push(`atempo=${targetTempo.toFixed(6)}`);
+            filterParts.push(`[vpre]${tempoFilters.join(',')}[vpre]`);
+            console.log(`[WYSIWYG] 音频变速: audioDurScale=${aDurScale}%, atempo chain: ${tempoFilters.join(',')}`);
+        }
+
         // 混响
         if (reverbResult) {
-            // IR 输入需要标记为 [ir___]
             filterParts.push(`[${irInputIdx}:a]aformat=sample_fmts=flt:channel_layouts=stereo[ir___]`);
             filterParts.push(reverbResult.filter);
             voiceOutLabel = '[vfx]';
@@ -754,7 +940,13 @@ async function mixAudio(session) {
 
         let mixLabels = ['[voice]'];
 
-        // 背景音频
+        // 渲染后的背景音频（已含特效）
+        if (renderedBgInputIdx >= 0) {
+            filterParts.push(`[${renderedBgInputIdx}:a]volume=${bgVolume.toFixed(3)}[rbg]`);
+            mixLabels.push('[rbg]');
+        }
+
+        // 背景音频（原始，无特效）
         if (bgInputIdx >= 0) {
             filterParts.push(`[${bgInputIdx}:a]volume=${bgVolume.toFixed(3)}[bg]`);
             mixLabels.push('[bg]');
@@ -815,6 +1007,14 @@ function _runMixFFmpeg(ffmpeg, args, session) {
             // 清理临时渲染人声 WAV
             if (session._renderedVoiceCleanup) {
                 try { fs.unlinkSync(session._renderedVoiceCleanup); } catch (_) { }
+            }
+            // 清理临时渲染背景层音频 WAV
+            if (session._renderedBgCleanup) {
+                try { fs.unlinkSync(session._renderedBgCleanup); } catch (_) { }
+            }
+            // 清理临时渲染配乐层 WAV
+            if (session._renderedBgmCleanup) {
+                try { fs.unlinkSync(session._renderedBgmCleanup); } catch (_) { }
             }
             if (code === 0 && fs.existsSync(session.outputPath)) {
                 console.log(`[WYSIWYG] 输出: ${session.outputPath} (${(fs.statSync(session.outputPath).size / 1024 / 1024).toFixed(1)}MB)`);
